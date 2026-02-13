@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Dashboard</h2>
+<div class="cards">
+<div class="card">Active pallets: {{active}}</div>
+<div class="card">On hold: {{hold}}</div>
+<div class="card">Open maintenance: {{maintenance_open}}</div>
+<div class="card">Low stock consumables: {{low_stock}}</div>
+</div>
+<h3>Station load / Bottlenecks</h3>
+<ul>{% for b in bottlenecks %}<li>Station {{b[0]}}: {{b[1]}} queued</li>{% endfor %}</ul>
+{% endblock %}

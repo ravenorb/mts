@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ 'Edit' if item else 'New' }} {{entity}}</h2>
+<form method="post" action="/entity/{{entity}}/save">
+  {% if item %}<input type="hidden" name="id" value="{{item.id}}" />{% endif %}
+  {% for c in cols %}
+    <div>
+      <label>{{c.name}}</label>
+      <input name="{{c.name}}" value="{{ item|attr(c.name) if item else '' }}" />
+    </div>
+  {% endfor %}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}
