@@ -6,7 +6,8 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -58,6 +59,93 @@ ROLE_WRITE = {
     "planner": set(MODEL_MAP.keys()) - {"users"},
     "admin": set(MODEL_MAP.keys()),
 }
+
+FIELD_CHOICES = {
+    ("users", "role"): ["operator", "maintenance", "purchasing", "planner", "admin"],
+    ("employees", "role"): ["operator", "maintenance", "purchasing", "planner", "admin"],
+    ("part_revisions", "is_current"): ["true", "false"],
+    ("cut_sheet_revisions", "is_current"): ["true", "false"],
+    ("stations", "active"): ["true", "false"],
+    ("pallets", "status"): ["staged", "in_progress", "hold", "complete", "combined"],
+    ("pallets", "pallet_type"): ["manual", "split", "mixed"],
+    ("queues", "status"): ["queued", "in_progress", "blocked", "done"],
+    ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
+    ("maintenance_requests", "status"): ["open", "in_progress", "closed"],
+    ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
+}
+
+
+def build_field_meta(entity: str, col):
+    choices = FIELD_CHOICES.get((entity, col.name), None)
+    if isinstance(col.type, Boolean):
+        choices = ["true", "false"]
+
+    expected = "Free text"
+    if isinstance(col.type, Integer):
+        expected = "Whole number (example: 5)"
+    elif isinstance(col.type, Float):
+        expected = "Number (example: 12.5)"
+    elif isinstance(col.type, Boolean):
+        expected = "Choose true or false"
+    elif isinstance(col.type, DateTime):
+        expected = "Date/time in ISO format (example: 2026-01-31T14:30:00)"
+    elif isinstance(col.type, String):
+        expected = f"Text up to {col.type.length} characters" if col.type.length else "Text"
+    elif isinstance(col.type, Text):
+        expected = "Long text"
+
+    required = (not col.nullable) and col.default is None and col.server_default is None
+
+    return {
+        "name": col.name,
+        "required": required,
+        "expected": expected,
+        "choices": choices,
+    }
+
+
+def parse_field_value(entity: str, col, raw_value):
+    if raw_value is None:
+        return None
+
+    val = raw_value.strip() if isinstance(raw_value, str) else raw_value
+    if val == "":
+        return None
+
+    choices = FIELD_CHOICES.get((entity, col.name), None)
+    if isinstance(col.type, Boolean):
+        lowered = str(val).strip().lower()
+        if lowered in {"true", "1", "yes", "on"}:
+            return True
+        if lowered in {"false", "0", "no", "off"}:
+            return False
+        raise ValueError("must be true or false")
+
+    if choices and str(val) not in choices:
+        raise ValueError(f"must be one of: {', '.join(choices)}")
+
+    if isinstance(col.type, Integer):
+        try:
+            return int(val)
+        except ValueError as exc:
+            raise ValueError("must be a whole number") from exc
+
+    if isinstance(col.type, Float):
+        try:
+            return float(val)
+        except ValueError as exc:
+            raise ValueError("must be a number") from exc
+
+    if isinstance(col.type, DateTime):
+        try:
+            return datetime.fromisoformat(str(val))
+        except ValueError as exc:
+            raise ValueError("must be an ISO date/time like 2026-01-31T14:30:00") from exc
+
+    if isinstance(col.type, String) and col.type.length and len(str(val)) > col.type.length:
+        raise ValueError(f"must be at most {col.type.length} characters")
+
+    return val
 
 
 def create_default_admin(db: Session):
@@ -140,7 +228,8 @@ def entity_new(entity: str, request: Request, db: Session = Depends(get_db), use
         raise HTTPException(403)
     model = MODEL_MAP.get(entity)
     cols = [c for c in model.__table__.columns if c.name != "id"]
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": None})
+    field_meta = {c.name: build_field_meta(entity, c) for c in cols}
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}})
 
 
 @app.post("/entity/{entity}/save")
@@ -148,27 +237,51 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
     if not can_write(user, entity):
         raise HTTPException(403)
     model = MODEL_MAP.get(entity)
+    if not model:
+        raise HTTPException(404)
+
     form = await request.form()
     item_id = form.get("id")
     item = db.query(model).filter_by(id=int(item_id)).first() if item_id else model()
+    cols = [c for c in model.__table__.columns if c.name != "id"]
+    field_meta = {c.name: build_field_meta(entity, c) for c in cols}
+    errors = {}
+    values = {}
+
     for col in model.__table__.columns:
         if col.name == "id":
             continue
         if col.name in form:
-            val = form.get(col.name)
-            if val == "":
-                val = None
-            if isinstance(col.type, Integer) and val is not None:
-                val = int(val)
-            if isinstance(col.type, Float) and val is not None:
-                val = float(val)
-            if isinstance(col.type, Boolean):
-                val = val in ["true", "on", "1", "yes"]
-            setattr(item, col.name, val)
+            raw_val = form.get(col.name)
+            values[col.name] = raw_val
+            try:
+                parsed = parse_field_value(entity, col, raw_val)
+            except ValueError as exc:
+                errors[col.name] = str(exc)
+                continue
+
+            if parsed is None and field_meta[col.name]["required"]:
+                errors[col.name] = "This field is required"
+                continue
+
+            setattr(item, col.name, parsed)
+
+    if errors:
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": errors, "field_meta": field_meta, "form_values": values}, status_code=422)
+
     if not item_id:
         db.add(item)
-    db.commit()
-    db.refresh(item)
+    try:
+        db.commit()
+        db.refresh(item)
+    except IntegrityError as exc:
+        db.rollback()
+        details = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+        friendly = "Could not save record because one or more fields have invalid or duplicate data."
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": f"{friendly} ({details})"}, "field_meta": field_meta, "form_values": values}, status_code=422)
+    except SQLAlchemyError:
+        db.rollback()
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving. Please review values and try again."}, "field_meta": field_meta, "form_values": values}, status_code=500)
 
     if entity == "pallets":
         snapshot = {"status": item.status, "station": item.current_station_id, "at": datetime.utcnow().isoformat()}
@@ -187,7 +300,8 @@ def entity_edit(entity: str, item_id: int, request: Request, db: Session = Depen
     model = MODEL_MAP.get(entity)
     item = db.query(model).filter_by(id=item_id).first()
     cols = [c for c in model.__table__.columns if c.name != "id"]
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item})
+    field_meta = {c.name: build_field_meta(entity, c) for c in cols}
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}})
 
 
 @app.post("/entity/{entity}/{item_id}/delete")
@@ -253,5 +367,3 @@ def create_traveler_file(db: Session, pallet_id: int):
     out = PDF_DIR / f"traveler_{pallet.pallet_code}.txt"
     out.write_text("\n".join(lines))
 
-
-from sqlalchemy import Integer, Float, Boolean
