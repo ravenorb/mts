@@ -9,4 +9,22 @@
   <a class="action-btn" href="/inventory/delivered-parts">Delivered Parts</a>
   <a class="action-btn" href="/inventory/scrap-steel">Scrap Steel</a>
 </div>
+
+<h3>Consumables by Station</h3>
+{% for station in stations %}
+  <h4>{{station.station_name}} (Station {{station.id}})</h4>
+  <table>
+    <tr><th>Qty On Hand</th><th>Description</th><th>Reorder Qty</th><th>Actions</th></tr>
+    {% for item in grouped_consumables.get(station.id, []) %}
+      <tr>
+        <td>{{item.qty_on_hand}}</td>
+        <td>{{item.description}}</td>
+        <td>{{item.reorder_point}}</td>
+        <td><a class="action-btn" href="/inventory/consumables/{{item.id}}">Edit / View</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4">No consumables assigned to this station.</td></tr>
+    {% endfor %}
+  </table>
+{% endfor %}
 {% endblock %}

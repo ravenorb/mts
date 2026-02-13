@@ -554,7 +554,23 @@ def ensure_storage_bins(db: Session, location: models.StorageLocation):
 
 @app.get("/inventory", response_class=HTMLResponse)
 def inventory_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    return templates.TemplateResponse("inventory_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS})
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    consumables = db.query(models.Consumable).order_by(models.Consumable.description.asc()).all()
+    grouped_consumables = {station.id: [] for station in stations}
+    for consumable in consumables:
+        if consumable.station_id in grouped_consumables:
+            grouped_consumables[consumable.station_id].append(consumable)
+    return templates.TemplateResponse(
+        "inventory_dashboard.html",
+        {
+            "request": request,
+            "user": user,
+            "top_nav": TOP_NAV,
+            "entity_groups": ENTITY_GROUPS,
+            "stations": stations,
+            "grouped_consumables": grouped_consumables,
+        },
+    )
 
 
 @app.get("/inventory/locations", response_class=HTMLResponse)
@@ -692,11 +708,64 @@ def raw_materials_delete(material_id: int, db: Session = Depends(get_db), user=D
 @app.get("/inventory/consumables", response_class=HTMLResponse)
 def consumables_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    locations = db.query(models.StorageLocation).order_by(models.StorageLocation.id.asc()).all()
     rows = db.query(models.Consumable).order_by(models.Consumable.id.asc()).all()
     grouped = {s.id: [] for s in stations}
     for row in rows:
         grouped.setdefault(row.station_id or 0, []).append(row)
-    return templates.TemplateResponse("consumables_inventory.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "stations": stations, "grouped": grouped})
+    return templates.TemplateResponse(
+        "consumables_inventory.html",
+        {
+            "request": request,
+            "user": user,
+            "top_nav": TOP_NAV,
+            "entity_groups": ENTITY_GROUPS,
+            "stations": stations,
+            "locations": locations,
+            "grouped": grouped,
+        },
+    )
+
+
+@app.get("/inventory/consumables/{consumable_id}", response_class=HTMLResponse)
+def consumable_detail(consumable_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    consumable = db.query(models.Consumable).filter_by(id=consumable_id).first()
+    if not consumable:
+        raise HTTPException(404)
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    locations = db.query(models.StorageLocation).order_by(models.StorageLocation.id.asc()).all()
+    return templates.TemplateResponse(
+        "consumable_detail.html",
+        {
+            "request": request,
+            "user": user,
+            "top_nav": TOP_NAV,
+            "entity_groups": ENTITY_GROUPS,
+            "consumable": consumable,
+            "stations": stations,
+            "locations": locations,
+        },
+    )
+
+
+@app.post("/inventory/consumables/{consumable_id}/edit")
+async def consumable_edit(consumable_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    consumable = db.query(models.Consumable).filter_by(id=consumable_id).first()
+    if not consumable:
+        raise HTTPException(404)
+    form = await request.form()
+    consumable.description = (form.get("description") or "").strip()
+    consumable.vendor = (form.get("vendor") or "").strip()
+    consumable.vendor_part_number = (form.get("vendor_part_number") or "").strip()
+    consumable.unit_cost = float(form.get("unit_cost") or 0)
+    consumable.qty_on_hand = float(form.get("qty_on_hand") or 0)
+    consumable.qty_on_order = float(form.get("qty_on_order") or 0)
+    consumable.qty_on_request = float(form.get("qty_on_request") or 0)
+    consumable.reorder_point = float(form.get("reorder_point") or 0)
+    consumable.station_id = int(form.get("station_id")) if form.get("station_id") else None
+    consumable.location_id = int(form.get("location_id")) if form.get("location_id") else None
+    db.commit()
+    return RedirectResponse(f"/inventory/consumables/{consumable.id}", status_code=302)
 
 
 @app.get("/inventory/scrap-steel", response_class=HTMLResponse)

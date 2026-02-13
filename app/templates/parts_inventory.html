@@ -2,9 +2,9 @@
 {% block content %}
 <h2>Parts</h2>
 <table>
-  <tr><th>Part Number</th><th>Qty On Hand Total</th><th>Qty Queued To Cut</th><th>Qty To Bend</th><th>Qty To Weld</th></tr>
+  <tr><th>Part Number</th><th>Qty On Hand Total</th><th>Qty Stored</th><th>Qty Queued To Cut</th><th>Qty To Bend</th><th>Qty To Weld</th></tr>
   {% for part, inv in rows %}
-  <tr><td>{{part.part_number}}</td><td>{{inv.qty_on_hand_total if inv else 0}}</td><td>{{inv.qty_queued_to_cut if inv else 0}}</td><td>{{inv.qty_to_bend if inv else 0}}</td><td>{{inv.qty_to_weld if inv else 0}}</td></tr>
+  <tr><td>{{part.part_number}}</td><td>{{inv.qty_on_hand_total if inv else 0}}</td><td>{{inv.qty_stored if inv else 0}}</td><td>{{inv.qty_queued_to_cut if inv else 0}}</td><td>{{inv.qty_to_bend if inv else 0}}</td><td>{{inv.qty_to_weld if inv else 0}}</td></tr>
   {% endfor %}
 </table>
 {% endblock %}

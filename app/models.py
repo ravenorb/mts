@@ -273,6 +273,7 @@ class Consumable(Base):
     qty_on_request: Mapped[float] = mapped_column(Float, default=0)
     reorder_point: Mapped[float] = mapped_column(Float, default=0)
     station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("storage_locations.id"), nullable=True)
 
 
 class PurchaseRequest(Base):
@@ -352,6 +353,7 @@ class PartInventory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     part_id: Mapped[int] = mapped_column(ForeignKey("parts.id"), unique=True)
     qty_on_hand_total: Mapped[float] = mapped_column(Float, default=0)
+    qty_stored: Mapped[float] = mapped_column(Float, default=0)
     qty_queued_to_cut: Mapped[float] = mapped_column(Float, default=0)
     qty_to_bend: Mapped[float] = mapped_column(Float, default=0)
     qty_to_weld: Mapped[float] = mapped_column(Float, default=0)

@@ -2,10 +2,13 @@
 {% block content %}
 <h2>Edit Storage Location #{{location.id}}</h2>
 <form method="post" action="/inventory/locations/{{location.id}}/edit" class="panel-form">
-  <input name="location_description" value="{{location.location_description}}" required />
+  <label for="location_description">Location Description</label>
+  <input id="location_description" name="location_description" value="{{location.location_description}}" required />
   <label><input type="checkbox" name="pallet_storage" {% if location.pallet_storage %}checked{% endif %}/> Pallet storage</label>
-  <input type="number" name="shelf_count" value="{{location.shelf_count}}" min="1" required />
-  <input type="number" name="bin_count" value="{{location.bin_count}}" min="1" required />
+  <label for="shelf_count"># of Shelves</label>
+  <input id="shelf_count" type="number" name="shelf_count" value="{{location.shelf_count}}" min="1" required />
+  <label for="bin_count"># of Bins</label>
+  <input id="bin_count" type="number" name="bin_count" value="{{location.bin_count}}" min="1" required />
   <button type="submit">Save</button>
 </form>
 <form method="post" action="/inventory/locations/{{location.id}}/delete">
