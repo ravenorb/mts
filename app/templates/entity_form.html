@@ -6,7 +6,6 @@
   {% if errors.get('__all__') %}
     <div class="form-error-banner">{{ errors.get('__all__') }}</div>
   {% endif %}
-  {% for c in cols %}
   {% if entity == "employees" %}
     <div class="form-field">
       <label>logon_username</label>
@@ -17,6 +16,7 @@
       <input name="logon_password" value="{% if view_only and linked_user %}********{% endif %}" {% if view_only %}disabled{% endif %}/>
     </div>
   {% endif %}
+  {% for c in cols %}
     {% set meta = field_meta.get(c.name, {}) %}
     {% set posted = form_values.get(c.name) if form_values else none %}
     {% set current_val = posted if posted is not none else (item|attr(c.name) if item else '') %}
