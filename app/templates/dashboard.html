@@ -1,12 +1,30 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Dashboard</h2>
+<h2>Plant Dashboard</h2>
 <div class="cards">
-<div class="card">Active pallets: {{active}}</div>
-<div class="card">On hold: {{hold}}</div>
-<div class="card">Open maintenance: {{maintenance_open}}</div>
-<div class="card">Low stock consumables: {{low_stock}}</div>
+  <div class="card"><div class="label">Active pallets</div><div class="value">{{active}}</div></div>
+  <div class="card"><div class="label">Staged pallets</div><div class="value">{{staged}}</div></div>
+  <div class="card warning"><div class="label">On hold</div><div class="value">{{hold}}</div></div>
+  <div class="card"><div class="label">In progress</div><div class="value">{{in_progress}}</div></div>
+  <div class="card danger"><div class="label">Open maintenance</div><div class="value">{{maintenance_open}}</div></div>
+  <div class="card danger"><div class="label">Material risk</div><div class="value">{{low_stock}} low stock</div></div>
 </div>
-<h3>Station load / Bottlenecks</h3>
-<ul>{% for b in bottlenecks %}<li>Station {{b[0]}}: {{b[1]}} queued</li>{% endfor %}</ul>
+
+<h3>Station Load</h3>
+<div class="station-list">
+  {% for row in station_load %}
+    <div class="station-row">
+      <div class="station-name">{{row.name}}</div>
+      <div class="bar"><span style="width: {{row.percent}}%"></span></div>
+      <div class="station-count">{{row.load}}</div>
+    </div>
+  {% endfor %}
+</div>
+
+<h3>Bottlenecks</h3>
+<ul>
+  {% for b in bottlenecks %}
+    <li>Station {{b[0]}} has {{b[1]}} queued pallets</li>
+  {% endfor %}
+</ul>
 {% endblock %}

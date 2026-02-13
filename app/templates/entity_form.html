@@ -13,7 +13,14 @@
     <div class="form-field">
       <label>{{c.name}}{% if meta.required %} *{% endif %}</label>
 
-      {% if meta.choices %}
+      {% if meta.fk_choices %}
+        <select name="{{c.name}}">
+          <option value="">-- select --</option>
+          {% for opt in meta.fk_choices %}
+            <option value="{{opt.value}}" {% if current_val|string == opt.value|string %}selected{% endif %}>{{opt.label}}</option>
+          {% endfor %}
+        </select>
+      {% elif meta.choices %}
         <select name="{{c.name}}">
           <option value="">-- select --</option>
           {% for opt in meta.choices %}
