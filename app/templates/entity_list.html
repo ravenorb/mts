@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{entity}}</h2>
+{% if can_write %}<a href="/entity/{{entity}}/new">Create</a>{% endif %}
+<table>
+  <tr>{% for c in cols %}<th>{{c}}</th>{% endfor %}<th>Actions</th></tr>
+  {% for r in rows %}
+    <tr>
+      {% for c in cols %}<td>{{r|attr(c)}}</td>{% endfor %}
+      <td>
+        <a href="/entity/{{entity}}/{{r.id}}/edit">Edit</a>
+        {% if can_write %}
+        <form method="post" action="/entity/{{entity}}/{{r.id}}/delete" style="display:inline"><button>Delete</button></form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+{% if entity=='pallets' %}
+<h3>Split Pallet</h3>
+<form method="post" action="/pallets/1/split">
+  <input name="quantity" placeholder="quantity to split from pallet 1" />
+  <button>Split</button>
+</form>
+<h3>Combine Pallets</h3>
+<form method="post" action="/pallets/combine">
+  <input name="target_id" placeholder="target pallet id" />
+  <input name="source_id" placeholder="source pallet id" />
+  <button>Combine</button>
+</form>
+{% endif %}
+{% endblock %}

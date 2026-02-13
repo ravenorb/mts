@@ -1,0 +1,15 @@
+services:
+  mts-web:
+    build: .
+    container_name: mts-web
+    ports:
+      - "80:80"
+    environment:
+      SQL_DATA_PATH: /data/sql/mts.db
+      DRAWING_DATA_PATH: /data/drawings
+      PDF_DATA_PATH: /data/pdfs
+      SECRET_KEY: change-me
+    volumes:
+      - ./data/sql:/data/sql
+      - ./data/drawings:/data/drawings
+      - ./data/pdfs:/data/pdfs
