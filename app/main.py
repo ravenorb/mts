@@ -666,7 +666,9 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
     branch_result = run_git_command(["branch", "--list"])
     branch_lines = branch_result.stdout.splitlines() if branch_result else []
     branches = [line.replace("*", "").strip() for line in branch_lines if line.strip()]
-    active_branch = next((line.replace("*", "").strip() for line in branch_lines if line.startswith("*")), "")
+    if "main" not in branches:
+        branches.insert(0, "main")
+    active_branch = next((line.replace("*", "").strip() for line in branch_lines if line.startswith("*")), "main") or "main"
 
     admin_cols = {k: [c.name for c in MODEL_MAP[k].__table__.columns] for k in ["users", "stations", "skills", "employees"]}
 
@@ -707,7 +709,7 @@ async def server_maintenance(request: Request, db: Session = Depends(get_db), us
     global DRAWING_DIR, PDF_DIR, PART_FILE_DIR
     form = await request.form()
     action = form.get("action", "")
-    chosen_branch = form.get("branch", "")
+    chosen_branch = "main"
     message = "No action taken"
 
     if action in {"switch_branch", "pull_latest"} and not run_git_command(["--version"]):

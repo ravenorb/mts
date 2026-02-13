@@ -41,3 +41,8 @@ th,td{border:1px solid #ccc;padding:6px;font-size:12px;vertical-align:top}
 
 .checkbox-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;background:#f8fafc;padding:8px;border:1px solid #d1d5db;border-radius:6px}
 textarea{padding:9px;border:1px solid #bbb;border-radius:4px;min-height:90px}
+
+button,input[type="submit"],input[type="button"],.action-btn{color:#001f54!important}
+button,input[type="submit"],input[type="button"]{background:#eef2ff}
+.action-btn{background:#e2e8f0;border:1px solid #94a3b8}
+.action-btn.secondary{background:#dbeafe}
