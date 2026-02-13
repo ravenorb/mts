@@ -1,26 +1,40 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Engineering Upload</h2>
-<p>Release program paths to locked revision data for production use.</p>
+<h2>Part Revision Files - Revision {{part_revision.id}} / {{part_revision.revision_code}}</h2>
+<p>Upload revision-specific files and choose stations that can access each file.</p>
 {% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
 {% if error %}<div class="form-error-banner">{{error}}</div>{% endif %}
-<form method="post" action="/engineering/upload" class="panel-form">
-  <label>Part revision</label>
-  <select name="part_revision_id" required>
-    <option value="">-- select revision --</option>
-    {% for p in part_revisions %}
-      <option value="{{p.id}}">{{p.id}} — Revision {{p.revision_code}}</option>
+<form method="post" enctype="multipart/form-data" class="panel-form">
+  <label>File type</label>
+  <select name="file_type" required>
+    <option value="laser">Laser cut file</option>
+    <option value="waterjet">Waterjet cut file</option>
+    <option value="welder_module">Welder module file</option>
+    <option value="drawing">Drawing file</option>
+    <option value="pdf">PDF file</option>
+  </select>
+  <label>Upload file</label>
+  <input type="file" name="upload_file" required />
+  <label>Make available to stations</label>
+  <div class="checkbox-grid">
+    {% for st in stations %}
+    <label><input type="checkbox" name="available_station_ids" value="{{st.id}}" /> {{st.station_name}}</label>
     {% endfor %}
-  </select>
-  <label>Program type</label>
-  <select name="program_type" required>
-    <option value="laser">Laser</option>
-    <option value="waterjet">Waterjet</option>
-    <option value="robotic_weld">Robotic weld</option>
-    <option value="manual_weld">Manual weld drawing</option>
-  </select>
-  <label>Program path</label>
-  <input name="program_path" placeholder="/data/programs/file.nc" required />
-  <button type="submit">Release Upload</button>
+  </div>
+  <button type="submit">Upload Revision File</button>
 </form>
+
+<h3>Files already on this revision</h3>
+<table>
+  <tr><th>Type</th><th>File Name</th><th>Stations</th><th>Uploaded By</th><th>Time</th></tr>
+  {% for f in files %}
+  <tr>
+    <td>{{f.file_type}}</td>
+    <td>{{f.original_name}}</td>
+    <td>{{f.station_ids_csv or 'none'}}</td>
+    <td>{{f.uploaded_by}}</td>
+    <td>{{f.uploaded_at}}</td>
+  </tr>
+  {% endfor %}
+</table>
 {% endblock %}

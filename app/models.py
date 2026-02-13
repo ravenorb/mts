@@ -58,6 +58,29 @@ class PartRevision(Base):
     change_notes: Mapped[str] = mapped_column(Text, default="")
 
 
+class PartRevisionFile(Base):
+    __tablename__ = "part_revision_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_revision_id: Mapped[int] = mapped_column(ForeignKey("part_revisions.id"))
+    file_type: Mapped[str] = mapped_column(String(40))
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(Text)
+    station_ids_csv: Mapped[str] = mapped_column(Text, default="")
+    uploaded_by: Mapped[str] = mapped_column(String(80), default="system")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class EngineeringQuestion(Base):
+    __tablename__ = "engineering_questions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    pallet_id: Mapped[int | None] = mapped_column(ForeignKey("pallets.id"), nullable=True)
+    asked_by: Mapped[str] = mapped_column(String(80), default="operator")
+    question_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PartProcessDefinition(Base):
     __tablename__ = "part_process_definitions"
     id: Mapped[int] = mapped_column(primary_key=True)

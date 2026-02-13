@@ -9,6 +9,9 @@
       {% for c in cols %}<td>{{r|attr(c)}}</td>{% endfor %}
       <td>
         <a href="/entity/{{entity}}/{{r.id}}/edit">Edit</a>
+        {% if entity == 'part_revisions' %}
+          | <a href="/engineering/revisions/{{r.id}}/files">Revision Files</a>
+        {% endif %}
         {% if can_write %}
         <form method="post" action="/entity/{{entity}}/{{r.id}}/delete" style="display:inline"><button>Delete</button></form>
         {% endif %}
