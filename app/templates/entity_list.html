@@ -8,7 +8,7 @@
     <tr>
       {% for c in cols %}<td>{{r|attr(c)}}</td>{% endfor %}
       <td>
-        <a href="/entity/{{entity}}/{{r.id}}/edit">Edit</a>
+        <a href="/entity/{{entity}}/{{r.id}}/edit">Edit</a> | <a href="/admin/{{entity}}/{{r.id}}/view">View</a>
         {% if entity == 'part_revisions' %}
           | <a href="/engineering/revisions/{{r.id}}/files">Revision Files</a>
         {% endif %}
