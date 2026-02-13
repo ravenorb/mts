@@ -21,10 +21,32 @@ app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "change
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
-DRAWING_DIR = Path(os.getenv("DRAWING_DATA_PATH", "/data/drawings"))
-PDF_DIR = Path(os.getenv("PDF_DATA_PATH", "/data/pdfs"))
-PART_FILE_DIR = Path(os.getenv("PART_FILE_DATA_PATH", "/data/part_revision_files"))
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SETTINGS_PATH = Path(os.getenv("MTS_RUNTIME_SETTINGS_PATH", "/data/config/runtime_settings.json"))
+
+
+def load_runtime_settings() -> dict:
+    try:
+        if SETTINGS_PATH.exists():
+            return json.loads(SETTINGS_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {}
+
+
+def save_runtime_settings(settings: dict) -> bool:
+    try:
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+        return True
+    except OSError:
+        return False
+
+
+RUNTIME_SETTINGS = load_runtime_settings()
+DRAWING_DIR = Path(RUNTIME_SETTINGS.get("DRAWING_DATA_PATH") or os.getenv("DRAWING_DATA_PATH", "/data/drawings"))
+PDF_DIR = Path(RUNTIME_SETTINGS.get("PDF_DATA_PATH") or os.getenv("PDF_DATA_PATH", "/data/pdfs"))
+PART_FILE_DIR = Path(RUNTIME_SETTINGS.get("PART_FILE_DATA_PATH") or os.getenv("PART_FILE_DATA_PATH", "/data/part_revision_files"))
 DRAWING_DIR.mkdir(parents=True, exist_ok=True)
 PDF_DIR.mkdir(parents=True, exist_ok=True)
 PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,6 +57,31 @@ def run_git_command(args: list[str]) -> subprocess.CompletedProcess[str] | None:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=False, cwd=REPO_ROOT)
     except FileNotFoundError:
         return None
+
+
+def list_branches() -> tuple[list[str], str]:
+    branch_result = run_git_command(["branch", "--all", "--format=%(refname:short)"])
+    branch_lines = branch_result.stdout.splitlines() if branch_result else []
+    branch_lookup = run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
+    active_branch = (branch_lookup.stdout.strip() if branch_lookup else "main") or "main"
+
+    branches: list[str] = []
+    seen: set[str] = set()
+    for line in branch_lines:
+        name = line.strip()
+        if not name or "->" in name:
+            continue
+        if name.startswith("remotes/"):
+            name = name.replace("remotes/origin/", "", 1)
+        if name not in seen:
+            branches.append(name)
+            seen.add(name)
+
+    if active_branch not in seen:
+        branches.insert(0, active_branch)
+    if "main" not in seen:
+        branches.insert(0, "main")
+    return branches, active_branch
 
 MODEL_MAP = {
     "parts": models.Part,
@@ -866,12 +913,7 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
         "employees": db.query(models.Employee).order_by(models.Employee.id.desc()).limit(200).all(),
     }
 
-    branch_result = run_git_command(["branch", "--list"])
-    branch_lines = branch_result.stdout.splitlines() if branch_result else []
-    branches = [line.replace("*", "").strip() for line in branch_lines if line.strip()]
-    if "main" not in branches:
-        branches.insert(0, "main")
-    active_branch = next((line.replace("*", "").strip() for line in branch_lines if line.startswith("*")), "main") or "main"
+    branches, active_branch = list_branches()
 
     admin_cols = {k: [c.name for c in MODEL_MAP[k].__table__.columns] for k in ["users", "stations", "skills", "employees"]}
 
@@ -889,6 +931,8 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
             "DRAWING_DATA_PATH": str(DRAWING_DIR),
             "PDF_DATA_PATH": str(PDF_DIR),
             "PART_FILE_DATA_PATH": str(PART_FILE_DIR),
+            "SQL_DATA_PATH": RUNTIME_SETTINGS.get("SQL_DATA_PATH") or os.getenv("SQL_DATA_PATH", "/data/sql/mts.db"),
+            "settings_path": str(SETTINGS_PATH),
         },
         "message": request.query_params.get("message"),
     })
@@ -909,36 +953,59 @@ def admin_entity_view(entity: str, item_id: int, request: Request, db: Session =
 
 @app.post("/admin/server-maintenance")
 async def server_maintenance(request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
-    global DRAWING_DIR, PDF_DIR, PART_FILE_DIR
+    global DRAWING_DIR, PDF_DIR, PART_FILE_DIR, RUNTIME_SETTINGS
     form = await request.form()
     action = form.get("action", "")
-    chosen_branch = "main"
+    chosen_branch = (form.get("branch") or "").replace("remotes/origin/", "", 1).strip()
     message = "No action taken"
 
-    if action in {"switch_branch", "pull_latest"} and not run_git_command(["--version"]):
+    if action in {"refresh_branches", "switch_branch", "pull_latest"} and not run_git_command(["--version"]):
         message = "Git is not available on this server. Install git to use branch maintenance actions."
+    elif action == "refresh_branches":
+        fetch_result = run_git_command(["fetch", "--all", "--prune"])
+        message = "Branch list refreshed" if fetch_result and fetch_result.returncode == 0 else f"Refresh failed: {(fetch_result.stderr.strip() if fetch_result else 'git unavailable')}"
     elif action == "switch_branch" and chosen_branch:
-        result = run_git_command(["checkout", chosen_branch])
-        if not result:
+        run_git_command(["fetch", "origin", chosen_branch])
+        checkout_result = run_git_command(["checkout", chosen_branch])
+        if checkout_result and checkout_result.returncode != 0:
+            tracking_result = run_git_command(["checkout", "-B", chosen_branch, f"origin/{chosen_branch}"])
+            checkout_result = tracking_result or checkout_result
+        if not checkout_result:
             message = "Git is not available on this server."
         else:
-            message = "Branch switched" if result.returncode == 0 else f"Branch switch failed: {result.stderr.strip()}"
+            message = "Branch switched" if checkout_result.returncode == 0 else f"Branch switch failed: {checkout_result.stderr.strip()}"
     elif action == "pull_latest":
-        branch_lookup = run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
-        pull_branch = chosen_branch or (branch_lookup.stdout.strip() if branch_lookup else "")
-        result = run_git_command(["pull", "origin", pull_branch]) if pull_branch else None
-        if not result:
-            message = "Unable to determine branch or run git pull on this server."
+        pull_branch = chosen_branch
+        if not pull_branch:
+            branch_lookup = run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
+            pull_branch = (branch_lookup.stdout.strip() if branch_lookup else "")
+        if not pull_branch:
+            message = "Unable to determine branch for pull."
         else:
-            message = "Latest changes pulled" if result.returncode == 0 else f"Pull failed: {result.stderr.strip()}"
+            run_git_command(["fetch", "origin", pull_branch])
+            run_git_command(["checkout", pull_branch])
+            result = run_git_command(["pull", "origin", pull_branch])
+            if not result:
+                message = "Unable to run git pull on this server."
+            else:
+                message = "Latest changes pulled. Rebuild/restart container to apply runtime changes." if result.returncode == 0 else f"Pull failed: {result.stderr.strip()}"
     elif action == "update_paths":
         DRAWING_DIR = Path(form.get("DRAWING_DATA_PATH", str(DRAWING_DIR)))
         PDF_DIR = Path(form.get("PDF_DATA_PATH", str(PDF_DIR)))
         PART_FILE_DIR = Path(form.get("PART_FILE_DATA_PATH", str(PART_FILE_DIR)))
+        sql_data_path = str(form.get("SQL_DATA_PATH", RUNTIME_SETTINGS.get("SQL_DATA_PATH") or os.getenv("SQL_DATA_PATH", "/data/sql/mts.db"))).strip()
         DRAWING_DIR.mkdir(parents=True, exist_ok=True)
         PDF_DIR.mkdir(parents=True, exist_ok=True)
         PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
-        message = "Data paths updated for running server"
+        Path(sql_data_path).parent.mkdir(parents=True, exist_ok=True)
+        RUNTIME_SETTINGS.update({
+            "DRAWING_DATA_PATH": str(DRAWING_DIR),
+            "PDF_DATA_PATH": str(PDF_DIR),
+            "PART_FILE_DATA_PATH": str(PART_FILE_DIR),
+            "SQL_DATA_PATH": sql_data_path,
+        })
+        persisted = save_runtime_settings(RUNTIME_SETTINGS)
+        message = f"Data paths saved to {SETTINGS_PATH}. Restart app to apply DB path changes." if persisted else "Failed to persist settings to disk."
 
     return RedirectResponse(f"/admin?tab=server-maintenance&message={message}", status_code=302)
 

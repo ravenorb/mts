@@ -8,8 +8,12 @@ services:
       SQL_DATA_PATH: /data/sql/mts.db
       DRAWING_DATA_PATH: /data/drawings
       PDF_DATA_PATH: /data/pdfs
+      PART_FILE_DATA_PATH: /data/part_revision_files
+      MTS_RUNTIME_SETTINGS_PATH: /data/config/runtime_settings.json
       SECRET_KEY: change-me
     volumes:
       - ./data/sql:/data/sql
       - ./data/drawings:/data/drawings
       - ./data/pdfs:/data/pdfs
+      - ./data/part_revision_files:/data/part_revision_files
+      - ./data/config:/data/config
