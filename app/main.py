@@ -28,6 +28,13 @@ DRAWING_DIR.mkdir(parents=True, exist_ok=True)
 PDF_DIR.mkdir(parents=True, exist_ok=True)
 PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def run_git_command(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        return None
+
 MODEL_MAP = {
     "parts": models.Part,
     "part_revisions": models.PartRevision,
@@ -432,9 +439,10 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
         "employees": db.query(models.Employee).order_by(models.Employee.id.desc()).limit(200).all(),
     }
 
-    branch_result = subprocess.run(["git", "branch", "--list"], capture_output=True, text=True, check=False)
-    branches = [line.replace("*", "").strip() for line in branch_result.stdout.splitlines() if line.strip()]
-    active_branch = next((line.replace("*", "").strip() for line in branch_result.stdout.splitlines() if line.startswith("*")), "")
+    branch_result = run_git_command(["branch", "--list"])
+    branch_lines = branch_result.stdout.splitlines() if branch_result else []
+    branches = [line.replace("*", "").strip() for line in branch_lines if line.strip()]
+    active_branch = next((line.replace("*", "").strip() for line in branch_lines if line.startswith("*")), "")
 
     admin_cols = {k: [c.name for c in MODEL_MAP[k].__table__.columns] for k in ["users", "stations", "skills", "employees"]}
 
@@ -478,13 +486,22 @@ async def server_maintenance(request: Request, db: Session = Depends(get_db), us
     chosen_branch = form.get("branch", "")
     message = "No action taken"
 
-    if action == "switch_branch" and chosen_branch:
-        result = subprocess.run(["git", "checkout", chosen_branch], capture_output=True, text=True, check=False)
-        message = "Branch switched" if result.returncode == 0 else f"Branch switch failed: {result.stderr.strip()}"
+    if action in {"switch_branch", "pull_latest"} and not run_git_command(["--version"]):
+        message = "Git is not available on this server. Install git to use branch maintenance actions."
+    elif action == "switch_branch" and chosen_branch:
+        result = run_git_command(["checkout", chosen_branch])
+        if not result:
+            message = "Git is not available on this server."
+        else:
+            message = "Branch switched" if result.returncode == 0 else f"Branch switch failed: {result.stderr.strip()}"
     elif action == "pull_latest":
-        pull_branch = chosen_branch or subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
-        result = subprocess.run(["git", "pull", "origin", pull_branch], capture_output=True, text=True, check=False)
-        message = "Latest changes pulled" if result.returncode == 0 else f"Pull failed: {result.stderr.strip()}"
+        branch_lookup = run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
+        pull_branch = chosen_branch or (branch_lookup.stdout.strip() if branch_lookup else "")
+        result = run_git_command(["pull", "origin", pull_branch]) if pull_branch else None
+        if not result:
+            message = "Unable to determine branch or run git pull on this server."
+        else:
+            message = "Latest changes pulled" if result.returncode == 0 else f"Pull failed: {result.stderr.strip()}"
     elif action == "update_paths":
         DRAWING_DIR = Path(form.get("DRAWING_DATA_PATH", str(DRAWING_DIR)))
         PDF_DIR = Path(form.get("PDF_DATA_PATH", str(PDF_DIR)))
