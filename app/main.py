@@ -58,6 +58,12 @@ MODEL_MAP = {
     "purchase_requests": models.PurchaseRequest,
     "purchase_request_lines": models.PurchaseRequestLine,
     "consumable_usage_logs": models.ConsumableUsageLog,
+    "storage_locations": models.StorageLocation,
+    "storage_bins": models.StorageBin,
+    "raw_materials": models.RawMaterial,
+    "scrap_steel": models.ScrapSteel,
+    "part_inventory": models.PartInventory,
+    "delivered_part_lots": models.DeliveredPartLot,
     "employees": models.Employee,
     "skills": models.Skill,
     "employee_skills": models.EmployeeSkill,
@@ -78,6 +84,8 @@ FIELD_CHOICES = {
     ("part_revisions", "is_current"): ["true", "false"],
     ("cut_sheet_revisions", "is_current"): ["true", "false"],
     ("stations", "active"): ["true", "false"],
+    ("storage_locations", "pallet_storage"): ["true", "false"],
+    ("scrap_steel", "delivered"): ["true", "false"],
     ("pallets", "status"): ["staged", "in_progress", "hold", "complete", "combined"],
     ("pallets", "pallet_type"): ["manual", "split", "mixed"],
     ("queues", "status"): ["queued", "in_progress", "blocked", "done"],
@@ -92,7 +100,7 @@ TOP_NAV = [
     ("Production", "/production"),
     ("Engineering", "/engineering"),
     ("Stations", "/stations"),
-    ("Inventory", "/entity/consumables"),
+    ("Inventory", "/inventory"),
     ("Purchasing", "/entity/purchase_requests"),
     ("Maintenance", "/entity/maintenance_requests"),
     ("Admin", "/admin"),
@@ -102,7 +110,7 @@ ENTITY_GROUPS = {
     "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
     "Engineering": ["parts", "part_revisions", "part_revision_files", "engineering_questions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
     "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
-    "Inventory": ["consumables", "consumable_usage_logs", "purchase_request_lines"],
+    "Inventory": ["storage_locations", "raw_materials", "consumables", "parts", "delivered_part_lots", "scrap_steel"],
     "People": ["employees", "skills", "employee_skills", "users"],
 }
 
@@ -399,6 +407,222 @@ def stations_report_engineering_issue(station_id: int = Form(...), pallet_id: in
     return RedirectResponse("/stations", status_code=302)
 
 
+
+
+def ensure_storage_bins(db: Session, location: models.StorageLocation):
+    existing = {(b.shelf_id, b.bin_id) for b in db.query(models.StorageBin).filter_by(storage_location_id=location.id).all()}
+    for shelf_id in range(1, max(location.shelf_count, 0) + 1):
+        for bin_id in range(1, max(location.bin_count, 0) + 1):
+            if (shelf_id, bin_id) not in existing:
+                db.add(models.StorageBin(storage_location_id=location.id, shelf_id=shelf_id, bin_id=bin_id))
+    db.commit()
+
+
+@app.get("/inventory", response_class=HTMLResponse)
+def inventory_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("inventory_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS})
+
+
+@app.get("/inventory/locations", response_class=HTMLResponse)
+def storage_location_list(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(models.StorageLocation).order_by(models.StorageLocation.id.asc()).all()
+    return templates.TemplateResponse("storage_locations.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows})
+
+
+@app.post("/inventory/locations/add")
+async def storage_location_add(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    form = await request.form()
+    location = models.StorageLocation(
+        location_description=(form.get("location_description") or "").strip(),
+        pallet_storage=(form.get("pallet_storage") == "on"),
+        shelf_count=int(form.get("shelf_count") or 1),
+        bin_count=int(form.get("bin_count") or 1),
+    )
+    db.add(location)
+    db.commit()
+    db.refresh(location)
+    ensure_storage_bins(db, location)
+    return RedirectResponse("/inventory/locations", status_code=302)
+
+
+@app.get("/inventory/locations/{location_id}", response_class=HTMLResponse)
+def storage_location_detail(location_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    location = db.query(models.StorageLocation).filter_by(id=location_id).first()
+    if not location:
+        raise HTTPException(404)
+    ensure_storage_bins(db, location)
+    bins = db.query(models.StorageBin).filter_by(storage_location_id=location_id).order_by(models.StorageBin.shelf_id.asc(), models.StorageBin.bin_id.asc()).all()
+    shelves = {}
+    for b in bins:
+        shelves.setdefault(b.shelf_id, []).append(b)
+    return templates.TemplateResponse("storage_location_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "location": location, "shelves": shelves})
+
+
+@app.get("/inventory/locations/{location_id}/edit", response_class=HTMLResponse)
+def storage_location_edit_form(location_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    location = db.query(models.StorageLocation).filter_by(id=location_id).first()
+    if not location:
+        raise HTTPException(404)
+    return templates.TemplateResponse("storage_location_edit.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "location": location})
+
+
+@app.post("/inventory/locations/{location_id}/edit")
+async def storage_location_edit(location_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    location = db.query(models.StorageLocation).filter_by(id=location_id).first()
+    if not location:
+        raise HTTPException(404)
+    form = await request.form()
+    location.location_description = (form.get("location_description") or "").strip()
+    location.pallet_storage = (form.get("pallet_storage") == "on")
+    location.shelf_count = int(form.get("shelf_count") or 1)
+    location.bin_count = int(form.get("bin_count") or 1)
+    db.commit()
+    ensure_storage_bins(db, location)
+    return RedirectResponse("/inventory/locations", status_code=302)
+
+
+@app.post("/inventory/locations/{location_id}/delete")
+def storage_location_delete(location_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    location = db.query(models.StorageLocation).filter_by(id=location_id).first()
+    if location:
+        db.query(models.StorageBin).filter_by(storage_location_id=location_id).delete()
+        db.delete(location)
+        db.commit()
+    return RedirectResponse("/inventory/locations", status_code=302)
+
+
+@app.post("/inventory/storage-bins/{bin_id}/edit")
+async def storage_bin_edit(bin_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.StorageBin).filter_by(id=bin_id).first()
+    if not row:
+        raise HTTPException(404)
+    form = await request.form()
+    row.qty = float(form.get("qty") or 0)
+    row.pallet_id = (form.get("pallet_id") or "").strip()
+    row.part_number = (form.get("part_number") or "").strip()
+    row.description = (form.get("description") or "").strip()
+    db.commit()
+    return RedirectResponse(f"/inventory/locations/{row.storage_location_id}", status_code=302)
+
+
+@app.get("/inventory/raw-materials", response_class=HTMLResponse)
+def raw_materials_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(models.RawMaterial).order_by(models.RawMaterial.id.asc()).all()
+    locations = db.query(models.StorageLocation).order_by(models.StorageLocation.id.asc()).all()
+    return templates.TemplateResponse("raw_materials.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows, "locations": locations})
+
+
+@app.post("/inventory/raw-materials/add")
+async def raw_materials_add(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    form = await request.form()
+    row = models.RawMaterial(
+        gauge=(form.get("gauge") or "").strip(),
+        length=float(form.get("length") or 0),
+        width=float(form.get("width") or 0),
+        qty_on_hand=float(form.get("qty_on_hand") or 0),
+        qty_on_request=float(form.get("qty_on_request") or 0),
+        qty_on_order=float(form.get("qty_on_order") or 0),
+        storage_location_id=int(form.get("storage_location_id")) if form.get("storage_location_id") else None,
+    )
+    db.add(row)
+    db.commit()
+    return RedirectResponse("/inventory/raw-materials", status_code=302)
+
+
+@app.post("/inventory/raw-materials/{material_id}/edit")
+async def raw_materials_edit(material_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.RawMaterial).filter_by(id=material_id).first()
+    if not row:
+        raise HTTPException(404)
+    form = await request.form()
+    row.gauge = (form.get("gauge") or "").strip()
+    row.length = float(form.get("length") or 0)
+    row.width = float(form.get("width") or 0)
+    row.qty_on_hand = float(form.get("qty_on_hand") or 0)
+    row.qty_on_request = float(form.get("qty_on_request") or 0)
+    row.qty_on_order = float(form.get("qty_on_order") or 0)
+    row.storage_location_id = int(form.get("storage_location_id")) if form.get("storage_location_id") else None
+    db.commit()
+    return RedirectResponse("/inventory/raw-materials", status_code=302)
+
+
+@app.post("/inventory/raw-materials/{material_id}/delete")
+def raw_materials_delete(material_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.RawMaterial).filter_by(id=material_id).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return RedirectResponse("/inventory/raw-materials", status_code=302)
+
+
+@app.get("/inventory/consumables", response_class=HTMLResponse)
+def consumables_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    rows = db.query(models.Consumable).order_by(models.Consumable.id.asc()).all()
+    grouped = {s.id: [] for s in stations}
+    for row in rows:
+        grouped.setdefault(row.station_id or 0, []).append(row)
+    return templates.TemplateResponse("consumables_inventory.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "stations": stations, "grouped": grouped})
+
+
+@app.get("/inventory/scrap-steel", response_class=HTMLResponse)
+def scrap_steel_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(models.ScrapSteel).order_by(models.ScrapSteel.id.asc()).all()
+    locations = db.query(models.StorageLocation).order_by(models.StorageLocation.id.asc()).all()
+    return templates.TemplateResponse("scrap_steel.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows, "locations": locations})
+
+
+
+
+@app.post("/inventory/scrap-steel/add")
+async def scrap_steel_add(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    form = await request.form()
+    row = models.ScrapSteel(
+        pallet_id=(form.get("pallet_id") or "").strip(),
+        storage_id=(form.get("storage_id") or "").strip(),
+        weight=float(form.get("weight") or 0),
+        location_id=int(form.get("location_id")) if form.get("location_id") else None,
+        scrap_type=(form.get("scrap_type") or "").strip(),
+    )
+    db.add(row)
+    db.commit()
+    return RedirectResponse("/inventory/scrap-steel", status_code=302)
+
+@app.post("/inventory/scrap-steel/{scrap_id}/edit")
+async def scrap_steel_edit(scrap_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.ScrapSteel).filter_by(id=scrap_id).first()
+    if not row:
+        raise HTTPException(404)
+    form = await request.form()
+    row.pallet_id = (form.get("pallet_id") or "").strip()
+    row.storage_id = (form.get("storage_id") or "").strip()
+    row.weight = float(form.get("weight") or 0)
+    row.location_id = int(form.get("location_id")) if form.get("location_id") else None
+    row.scrap_type = (form.get("scrap_type") or "").strip()
+    db.commit()
+    return RedirectResponse("/inventory/scrap-steel", status_code=302)
+
+
+@app.post("/inventory/scrap-steel/{scrap_id}/deliver")
+def scrap_steel_deliver(scrap_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.ScrapSteel).filter_by(id=scrap_id).first()
+    if row:
+        row.delivered = True
+        db.commit()
+    return RedirectResponse("/inventory/scrap-steel", status_code=302)
+
+
+@app.get("/inventory/parts", response_class=HTMLResponse)
+def parts_inventory_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(models.Part, models.PartInventory).outerjoin(models.PartInventory, models.PartInventory.part_id == models.Part.id).order_by(models.Part.part_number.asc()).all()
+    return templates.TemplateResponse("parts_inventory.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows})
+
+
+@app.get("/inventory/delivered-parts", response_class=HTMLResponse)
+def delivered_parts_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    rows = db.query(models.DeliveredPartLot).order_by(models.DeliveredPartLot.completed_at.desc()).all()
+    return templates.TemplateResponse("delivered_parts.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows})
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
@@ -475,7 +699,7 @@ def admin_entity_view(entity: str, item_id: int, request: Request, db: Session =
         raise HTTPException(404)
     cols = [c for c in model.__table__.columns if c.name != "id"]
     field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}, "view_only": True, "linked_user": db.query(models.User).filter_by(id=item.user_id).first() if entity == "employees" and item and item.user_id else None})
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}, "view_only": True})
 
 
 @app.post("/admin/server-maintenance")
@@ -521,7 +745,7 @@ def entity_new(entity: str, request: Request, db: Session = Depends(get_db), use
     model = MODEL_MAP.get(entity)
     cols = [c for c in model.__table__.columns if c.name != "id"]
     field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}, "linked_user": None})
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}})
 
 
 @app.post("/entity/{entity}/save")
@@ -575,26 +799,6 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
         db.rollback()
         return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving. Please review values and try again."}, "field_meta": field_meta, "form_values": values}, status_code=500)
 
-    if entity == "employees":
-        logon_username = (form.get("logon_username") or "").strip()
-        logon_password = (form.get("logon_password") or "").strip()
-        if logon_username:
-            linked_user = db.query(models.User).filter_by(username=logon_username).first()
-            if linked_user and item.user_id and linked_user.id != item.user_id:
-                return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Selected logon is already linked to another employee."}, "field_meta": field_meta, "form_values": values}, status_code=422)
-            if not linked_user:
-                linked_user = models.User(username=logon_username, password_hash=hash_password(logon_password or "change-me"), role=item.role or "operator", active=item.active)
-                db.add(linked_user)
-                db.commit()
-                db.refresh(linked_user)
-            elif logon_password:
-                linked_user.password_hash = hash_password(logon_password)
-                linked_user.role = item.role or linked_user.role
-                linked_user.active = item.active
-                db.commit()
-            item.user_id = linked_user.id
-            db.commit()
-
     if entity == "pallets":
         snapshot = {"status": item.status, "station": item.current_station_id, "at": datetime.utcnow().isoformat()}
         rev = models.PalletRevision(pallet_id=item.id, revision_code=f"R{int(datetime.utcnow().timestamp())}", snapshot_json=json.dumps(snapshot), created_by=user.username)
@@ -613,7 +817,7 @@ def entity_edit(entity: str, item_id: int, request: Request, db: Session = Depen
     item = db.query(model).filter_by(id=item_id).first()
     cols = [c for c in model.__table__.columns if c.name != "id"]
     field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}, "linked_user": db.query(models.User).filter_by(id=item.user_id).first() if entity == "employees" and item and item.user_id else None})
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}})
 
 
 @app.post("/entity/{entity}/{item_id}/delete")
