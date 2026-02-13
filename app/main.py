@@ -24,6 +24,7 @@ templates = Jinja2Templates(directory="app/templates")
 DRAWING_DIR = Path(os.getenv("DRAWING_DATA_PATH", "/data/drawings"))
 PDF_DIR = Path(os.getenv("PDF_DATA_PATH", "/data/pdfs"))
 PART_FILE_DIR = Path(os.getenv("PART_FILE_DATA_PATH", "/data/part_revision_files"))
+REPO_ROOT = Path(__file__).resolve().parents[1]
 DRAWING_DIR.mkdir(parents=True, exist_ok=True)
 PDF_DIR.mkdir(parents=True, exist_ok=True)
 PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -31,7 +32,7 @@ PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
 
 def run_git_command(args: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
-        return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+        return subprocess.run(["git", *args], capture_output=True, text=True, check=False, cwd=REPO_ROOT)
     except FileNotFoundError:
         return None
 
@@ -448,6 +449,96 @@ def stations_report_engineering_issue(station_id: int = Form(...), pallet_id: in
     db.add(models.EngineeringQuestion(station_id=station_id, pallet_id=pallet_id, asked_by=user.username, question_text=question_text, status="open"))
     db.commit()
     return RedirectResponse("/stations", status_code=302)
+
+
+@app.get("/maintenance", response_class=HTMLResponse)
+def maintenance_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    ensure_upcoming_scheduled_requests(db)
+    open_requests = db.query(models.MaintenanceRequest).filter(
+        models.MaintenanceRequest.request_type == "request",
+        models.MaintenanceRequest.status != "complete",
+    ).order_by(models.MaintenanceRequest.created_at.desc()).all()
+    upcoming = db.query(models.MaintenanceRequest).filter(
+        models.MaintenanceRequest.request_type == "scheduled",
+        models.MaintenanceRequest.status != "complete",
+        models.MaintenanceRequest.scheduled_for <= (datetime.utcnow() + timedelta(days=14)),
+    ).order_by(models.MaintenanceRequest.scheduled_for.asc(), models.MaintenanceRequest.created_at.asc()).all()
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    return templates.TemplateResponse("maintenance_dashboard.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "open_requests": open_requests,
+        "upcoming": upcoming,
+        "stations": stations,
+    })
+
+
+@app.get("/maintenance/{request_id}", response_class=HTMLResponse)
+def maintenance_request_detail(request_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
+    if not maint:
+        raise HTTPException(404)
+    usage_logs = db.query(models.ConsumableUsageLog).filter(models.ConsumableUsageLog.reason.like(f"maintenance_request:{request_id}:%")).order_by(models.ConsumableUsageLog.logged_at.asc()).all()
+    consumables = db.query(models.Consumable).order_by(models.Consumable.description.asc()).all()
+    return templates.TemplateResponse("maintenance_request_detail.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "maint": maint,
+        "usage_logs": usage_logs,
+        "consumables": consumables,
+        "status_choices": FIELD_CHOICES[("maintenance_requests", "status")],
+    })
+
+
+@app.post("/maintenance/{request_id}/consumables")
+def maintenance_add_consumable(request_id: int, consumable_id: int = Form(...), quantity_used: float = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
+    if not maint:
+        raise HTTPException(404)
+    if maint.status == "complete":
+        return RedirectResponse(f"/maintenance/{request_id}", status_code=302)
+    db.add(models.ConsumableUsageLog(
+        consumable_id=consumable_id,
+        station_id=maint.station_id,
+        quantity_delta=-abs(quantity_used),
+        reason=f"maintenance_request:{request_id}:{user.username}",
+    ))
+    db.commit()
+    return RedirectResponse(f"/maintenance/{request_id}", status_code=302)
+
+
+@app.post("/maintenance/{request_id}/save")
+def maintenance_save(request_id: int, work_comments: str = Form(""), status: str = Form("submitted"), db: Session = Depends(get_db), user=Depends(require_login)):
+    maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
+    if not maint:
+        raise HTTPException(404)
+    if maint.status == "complete":
+        return RedirectResponse(f"/maintenance/{request_id}", status_code=302)
+    if status not in FIELD_CHOICES[("maintenance_requests", "status")]:
+        raise HTTPException(422)
+
+    maint.work_comments = work_comments
+    maint.status = status
+    if status == "complete":
+        maint.completed_at = datetime.utcnow()
+        db.add(models.MaintenanceLog(
+            maintenance_request_id=maint.id,
+            station_id=maint.station_id,
+            closed_by=user.username,
+            closure_notes=work_comments,
+            closed_at=maint.completed_at,
+        ))
+        if maint.maintenance_task_id:
+            task = db.query(models.StationMaintenanceTask).filter_by(id=maint.maintenance_task_id).first()
+            if task:
+                task.last_completed_at = maint.completed_at
+                task.next_due_at = maint.completed_at + timedelta(hours=task.frequency_hours)
+    db.commit()
+    return RedirectResponse("/maintenance" if status == "complete" else f"/maintenance/{request_id}", status_code=302)
 
 
 
