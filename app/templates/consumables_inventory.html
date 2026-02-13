@@ -4,9 +4,9 @@
 {% for s in stations %}
   <h3>{{s.station_name}} (Station {{s.id}})</h3>
   <table>
-    <tr><th>ID</th><th>Description</th><th>Vendor</th><th>Vendor Part Number</th><th>Unit Cost</th><th>Qty On Hand</th><th>Qty On Order</th><th>Qty On Request</th><th>Reorder Point</th><th>Station ID</th></tr>
+    <tr><th>ID</th><th>Description</th><th>Vendor</th><th>Vendor Part Number</th><th>Unit Cost</th><th>Qty On Hand</th><th>Qty On Order</th><th>Qty On Request</th><th>Reorder Point</th><th>Station ID</th><th>Location ID</th><th>Actions</th></tr>
     {% for r in grouped.get(s.id, []) %}
-      <tr><td>{{r.id}}</td><td>{{r.description}}</td><td>{{r.vendor}}</td><td>{{r.vendor_part_number}}</td><td>{{r.unit_cost}}</td><td>{{r.qty_on_hand}}</td><td>{{r.qty_on_order}}</td><td>{{r.qty_on_request}}</td><td>{{r.reorder_point}}</td><td>{{r.station_id}}</td></tr>
+      <tr><td>{{r.id}}</td><td>{{r.description}}</td><td>{{r.vendor}}</td><td>{{r.vendor_part_number}}</td><td>{{r.unit_cost}}</td><td>{{r.qty_on_hand}}</td><td>{{r.qty_on_order}}</td><td>{{r.qty_on_request}}</td><td>{{r.reorder_point}}</td><td>{{r.station_id}}</td><td>{{r.location_id if r.location_id else ''}}</td><td><a href="/inventory/consumables/{{r.id}}">View / Edit</a></td></tr>
     {% endfor %}
   </table>
 {% endfor %}
