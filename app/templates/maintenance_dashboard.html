@@ -41,7 +41,7 @@
 <h3>Station Quick Access</h3>
 <div class="action-row">
   {% for st in stations %}
-    <a class="action-btn secondary" href="/entity/stations/{{st.id}}/edit">{{st.station_name}}</a>
+    <a class="action-btn secondary" href="/admin/stations/{{st.id}}/view">{{st.station_name}}</a>
   {% endfor %}
 </div>
 {% endblock %}

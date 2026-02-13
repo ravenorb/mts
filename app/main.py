@@ -108,6 +108,11 @@ ENTITY_GROUPS = {
 }
 
 MAINTENANCE_ACTIVE_STATUSES = ["submitted", "reviewed", "scheduled", "waiting on parts"]
+LEGACY_MAINTENANCE_STATUS_MAP = {
+    "open": "submitted",
+    "in_progress": "reviewed",
+    "closed": "complete",
+}
 
 
 def ensure_upcoming_scheduled_requests(db: Session):
@@ -137,6 +142,12 @@ def ensure_upcoming_scheduled_requests(db: Session):
             scheduled_for=task.next_due_at,
         ))
     db.commit()
+
+
+def normalize_maintenance_status(item: models.MaintenanceRequest):
+    mapped = LEGACY_MAINTENANCE_STATUS_MAP.get(item.status)
+    if mapped:
+        item.status = mapped
 
 
 def fk_choices(col, db: Session):
@@ -434,13 +445,18 @@ def stations_report_engineering_issue(station_id: int = Form(...), pallet_id: in
 @app.get("/maintenance", response_class=HTMLResponse)
 def maintenance_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     ensure_upcoming_scheduled_requests(db)
+    legacy_rows = db.query(models.MaintenanceRequest).filter(models.MaintenanceRequest.status.in_(list(LEGACY_MAINTENANCE_STATUS_MAP.keys()))).all()
+    for row in legacy_rows:
+        normalize_maintenance_status(row)
+    if legacy_rows:
+        db.commit()
     open_requests = db.query(models.MaintenanceRequest).filter(
         models.MaintenanceRequest.request_type == "request",
-        models.MaintenanceRequest.status != "complete",
+        models.MaintenanceRequest.status.in_(MAINTENANCE_ACTIVE_STATUSES),
     ).order_by(models.MaintenanceRequest.created_at.desc()).all()
     upcoming = db.query(models.MaintenanceRequest).filter(
         models.MaintenanceRequest.request_type == "scheduled",
-        models.MaintenanceRequest.status != "complete",
+        models.MaintenanceRequest.status.in_(MAINTENANCE_ACTIVE_STATUSES),
         models.MaintenanceRequest.scheduled_for <= (datetime.utcnow() + timedelta(days=14)),
     ).order_by(models.MaintenanceRequest.scheduled_for.asc(), models.MaintenanceRequest.created_at.asc()).all()
     stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
@@ -460,6 +476,8 @@ def maintenance_request_detail(request_id: int, request: Request, db: Session = 
     maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
     if not maint:
         raise HTTPException(404)
+    normalize_maintenance_status(maint)
+    db.commit()
     usage_logs = db.query(models.ConsumableUsageLog).filter(models.ConsumableUsageLog.reason.like(f"maintenance_request:{request_id}:%")).order_by(models.ConsumableUsageLog.logged_at.asc()).all()
     consumables = db.query(models.Consumable).order_by(models.Consumable.description.asc()).all()
     return templates.TemplateResponse("maintenance_request_detail.html", {
