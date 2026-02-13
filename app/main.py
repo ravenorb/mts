@@ -974,6 +974,13 @@ def entity_list(entity: str, request: Request, db: Session = Depends(get_db), us
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(get_db), user=Depends(require_admin)):
     tab = tab if tab in {"users", "stations", "skills", "employees", "server-maintenance"} else "users"
+    admin_tab_titles = {
+        "users": "Users",
+        "stations": "Stations",
+        "skills": "Skills",
+        "employees": "Employees",
+        "server-maintenance": "Server Maintenance",
+    }
     tab_data = {
         "users": db.query(models.User).order_by(models.User.id.desc()).limit(200).all(),
         "stations": db.query(models.Station).order_by(models.Station.id.desc()).limit(200).all(),
@@ -991,6 +998,7 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
         "top_nav": TOP_NAV,
         "entity_groups": ENTITY_GROUPS,
         "active_tab": tab,
+        "active_tab_title": admin_tab_titles[tab],
         "tab_data": tab_data,
         "admin_cols": admin_cols,
         "branches": branches,

@@ -1,12 +1,15 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Admin Dashboard</h2>
+<h2>{{active_tab_title}}</h2>
 
 {% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
 
 {% if active_tab in ['users','stations','skills','employees'] %}
   {% set entity = active_tab %}
-  <a href="/entity/{{entity}}/new" class="action-btn">Add New</a>
+  <div class="page-toolbar">
+    <div></div>
+    <a href="/entity/{{entity}}/new" class="action-btn">Add New</a>
+  </div>
   <table>
     <tr>
       {% for c in admin_cols[entity] %}<th>{{c}}</th>{% endfor %}
