@@ -74,8 +74,45 @@ FIELD_CHOICES = {
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
 }
 
+TOP_NAV = [
+    ("Dashboard", "/"),
+    ("Production", "/production"),
+    ("Engineering", "/engineering/upload"),
+    ("Stations", "/entity/stations"),
+    ("Inventory", "/entity/consumables"),
+    ("Purchasing", "/entity/purchase_requests"),
+    ("Maintenance", "/entity/maintenance_requests"),
+    ("Admin", "/entity/users"),
+]
 
-def build_field_meta(entity: str, col):
+ENTITY_GROUPS = {
+    "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
+    "Engineering": ["parts", "part_revisions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
+    "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
+    "Inventory": ["consumables", "consumable_usage_logs", "purchase_request_lines"],
+    "People": ["employees", "skills", "employee_skills", "users"],
+}
+
+
+def fk_choices(col, db: Session):
+    fk = next(iter(col.foreign_keys), None)
+    if not fk:
+        return None
+    table_name = fk.column.table.name
+    label_columns = ["pallet_code", "station_name", "part_number", "revision_code", "cut_sheet_number", "username", "employee_code", "description", "name"]
+    for entity_name, model in MODEL_MAP.items():
+        if model.__table__.name != table_name:
+            continue
+        rows = db.query(model).limit(300).all()
+        options = []
+        for row in rows:
+            label = next((str(getattr(row, attr)) for attr in label_columns if hasattr(row, attr) and getattr(row, attr) not in (None, "")), f"{table_name}:{row.id}")
+            options.append({"value": str(row.id), "label": f"{row.id} — {label}"})
+        return options
+    return None
+
+
+def build_field_meta(entity: str, col, db: Session):
     choices = FIELD_CHOICES.get((entity, col.name), None)
     if isinstance(col.type, Boolean):
         choices = ["true", "false"]
@@ -101,6 +138,7 @@ def build_field_meta(entity: str, col):
         "required": required,
         "expected": expected,
         "choices": choices,
+        "fk_choices": fk_choices(col, db),
     }
 
 
@@ -189,7 +227,97 @@ def root(request: Request, db: Session = Depends(get_db)):
     bottlenecks = db.query(models.Queue.station_id, func.count(models.Queue.id)).group_by(models.Queue.station_id).all()
     maintenance_open = db.query(models.MaintenanceRequest).filter_by(status="open").count()
     low_stock = db.query(models.Consumable).filter(models.Consumable.qty_on_hand <= models.Consumable.reorder_point).count()
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user, "active": active, "hold": hold, "bottlenecks": bottlenecks, "maintenance_open": maintenance_open, "low_stock": low_stock})
+    staged = db.query(models.Pallet).filter(models.Pallet.status == "staged").count()
+    in_progress = db.query(models.Pallet).filter(models.Pallet.status == "in_progress").count()
+    station_rows = db.query(models.Station.id, models.Station.station_name, func.count(models.Queue.id)).outerjoin(models.Queue, models.Queue.station_id == models.Station.id).group_by(models.Station.id, models.Station.station_name).all()
+    max_load = max([r[2] for r in station_rows], default=1)
+    station_load = [{"id": r[0], "name": r[1], "load": r[2], "percent": int((r[2] / max_load) * 100) if max_load else 0} for r in station_rows]
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "active": active, "hold": hold, "staged": staged, "in_progress": in_progress, "bottlenecks": bottlenecks, "station_load": station_load, "maintenance_open": maintenance_open, "low_stock": low_stock})
+
+
+@app.get("/production", response_class=HTMLResponse)
+def production(request: Request, q: str = "", db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = None
+    if q:
+        pallet_query = db.query(models.Pallet).filter(models.Pallet.pallet_code == q)
+        if q.isdigit():
+            pallet_query = db.query(models.Pallet).filter((models.Pallet.pallet_code == q) | (models.Pallet.id == int(q)))
+        pallet = pallet_query.first()
+    next_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).limit(12).all()
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
+    return templates.TemplateResponse("production.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "query": q, "found": pallet, "next_pallets": next_pallets, "stations": stations, "part_revisions": part_revisions, "errors": {}})
+
+
+@app.get("/production/pallet/{pallet_id}", response_class=HTMLResponse)
+def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not pallet:
+        raise HTTPException(404)
+    parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).all()
+    events = db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).order_by(models.PalletEvent.recorded_at.asc()).all()
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "parts": parts, "events": events, "stations": stations, "errors": {}})
+
+
+@app.post("/production/pallet/{pallet_id}/move")
+def pallet_move(pallet_id: int, station_id: int = Form(...), notes: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not pallet or not station:
+        raise HTTPException(404)
+    pallet.current_station_id = station_id
+    pallet.status = "in_progress"
+    db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="moved", quantity=0, recorded_by=user.username, notes=notes or f"Moved to {station.station_name}"))
+    db.commit()
+    return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
+
+
+@app.post("/production/create-pallet")
+def production_create_pallet(part_revision_id: int = Form(...), quantity: float = Form(...), location_station_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
+    if quantity <= 0:
+        raise HTTPException(422, "Quantity must be greater than zero")
+    code = f"P-{int(datetime.utcnow().timestamp())}"
+    pallet = models.Pallet(pallet_code=code, pallet_type="manual", status="staged", current_station_id=location_station_id, created_by=user.username)
+    db.add(pallet)
+    db.commit()
+    db.refresh(pallet)
+    db.add(models.PalletPart(pallet_id=pallet.id, part_revision_id=part_revision_id, planned_quantity=quantity, actual_quantity=quantity, scrap_quantity=0))
+    db.add(models.PalletEvent(pallet_id=pallet.id, station_id=location_station_id, event_type="created", quantity=quantity, recorded_by=user.username, notes="Manual pallet creation"))
+    db.commit()
+    create_traveler_file(db, pallet.id)
+    return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
+
+
+@app.get("/engineering/upload", response_class=HTMLResponse)
+def engineering_upload_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
+    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": None, "error": None})
+
+
+@app.post("/engineering/upload", response_class=HTMLResponse)
+def engineering_upload_save(request: Request, part_revision_id: int = Form(...), program_type: str = Form(...), program_path: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    process = db.query(models.PartProcessDefinition).filter_by(part_revision_id=part_revision_id).first()
+    if not process:
+        process = models.PartProcessDefinition(part_revision_id=part_revision_id)
+        db.add(process)
+        db.commit()
+        db.refresh(process)
+    if program_type == "laser":
+        process.laser_required = True
+        process.laser_program_path = program_path
+    elif program_type == "waterjet":
+        process.waterjet_required = True
+        process.waterjet_program_path = program_path
+    elif program_type == "robotic_weld":
+        process.robotic_weld_required = True
+        process.robotic_weld_program_path = program_path
+    else:
+        process.manual_weld_required = True
+        process.manual_weld_drawing_path = program_path
+    db.commit()
+    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
+    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": "Program path saved and revision data locked for production use.", "error": None})
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -219,7 +347,7 @@ def entity_list(entity: str, request: Request, db: Session = Depends(get_db), us
         raise HTTPException(404)
     rows = db.query(model).limit(200).all()
     cols = [c.name for c in model.__table__.columns]
-    return templates.TemplateResponse("entity_list.html", {"request": request, "user": user, "entity": entity, "rows": rows, "cols": cols, "can_write": can_write(user, entity)})
+    return templates.TemplateResponse("entity_list.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "rows": rows, "cols": cols, "can_write": can_write(user, entity)})
 
 
 @app.get("/entity/{entity}/new", response_class=HTMLResponse)
@@ -228,8 +356,8 @@ def entity_new(entity: str, request: Request, db: Session = Depends(get_db), use
         raise HTTPException(403)
     model = MODEL_MAP.get(entity)
     cols = [c for c in model.__table__.columns if c.name != "id"]
-    field_meta = {c.name: build_field_meta(entity, c) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}})
+    field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}})
 
 
 @app.post("/entity/{entity}/save")
@@ -244,7 +372,7 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
     item_id = form.get("id")
     item = db.query(model).filter_by(id=int(item_id)).first() if item_id else model()
     cols = [c for c in model.__table__.columns if c.name != "id"]
-    field_meta = {c.name: build_field_meta(entity, c) for c in cols}
+    field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
     errors = {}
     values = {}
 
@@ -267,7 +395,7 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
             setattr(item, col.name, parsed)
 
     if errors:
-        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": errors, "field_meta": field_meta, "form_values": values}, status_code=422)
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": errors, "field_meta": field_meta, "form_values": values}, status_code=422)
 
     if not item_id:
         db.add(item)
@@ -278,10 +406,10 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
         db.rollback()
         details = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
         friendly = "Could not save record because one or more fields have invalid or duplicate data."
-        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": f"{friendly} ({details})"}, "field_meta": field_meta, "form_values": values}, status_code=422)
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": f"{friendly} ({details})"}, "field_meta": field_meta, "form_values": values}, status_code=422)
     except SQLAlchemyError:
         db.rollback()
-        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving. Please review values and try again."}, "field_meta": field_meta, "form_values": values}, status_code=500)
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving. Please review values and try again."}, "field_meta": field_meta, "form_values": values}, status_code=500)
 
     if entity == "pallets":
         snapshot = {"status": item.status, "station": item.current_station_id, "at": datetime.utcnow().isoformat()}
@@ -300,8 +428,8 @@ def entity_edit(entity: str, item_id: int, request: Request, db: Session = Depen
     model = MODEL_MAP.get(entity)
     item = db.query(model).filter_by(id=item_id).first()
     cols = [c for c in model.__table__.columns if c.name != "id"]
-    field_meta = {c.name: build_field_meta(entity, c) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}})
+    field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}})
 
 
 @app.post("/entity/{entity}/{item_id}/delete")
@@ -366,4 +494,3 @@ def create_traveler_file(db: Session, pallet_id: int):
         lines.append(f"Part Revision {p.part_revision_id}: qty {p.actual_quantity}")
     out = PDF_DIR / f"traveler_{pallet.pallet_code}.txt"
     out.write_text("\n".join(lines))
-

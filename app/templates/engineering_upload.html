@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Engineering Upload</h2>
+<p>Release program paths to locked revision data for production use.</p>
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+{% if error %}<div class="form-error-banner">{{error}}</div>{% endif %}
+<form method="post" action="/engineering/upload" class="panel-form">
+  <label>Part revision</label>
+  <select name="part_revision_id" required>
+    <option value="">-- select revision --</option>
+    {% for p in part_revisions %}
+      <option value="{{p.id}}">{{p.id}} — Revision {{p.revision_code}}</option>
+    {% endfor %}
+  </select>
+  <label>Program type</label>
+  <select name="program_type" required>
+    <option value="laser">Laser</option>
+    <option value="waterjet">Waterjet</option>
+    <option value="robotic_weld">Robotic weld</option>
+    <option value="manual_weld">Manual weld drawing</option>
+  </select>
+  <label>Program path</label>
+  <input name="program_path" placeholder="/data/programs/file.nc" required />
+  <button type="submit">Release Upload</button>
+</form>
+{% endblock %}

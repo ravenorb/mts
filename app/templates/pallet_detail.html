@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Pallet {{pallet.pallet_code}}</h2>
+<div class="cards">
+  <div class="card"><div class="label">Status</div><div class="value">{{pallet.status}}</div></div>
+  <div class="card"><div class="label">Location / Station</div><div class="value">{{pallet.current_station_id or 'Staging'}}</div></div>
+  <div class="card"><div class="label">Type</div><div class="value">{{pallet.pallet_type}}</div></div>
+</div>
+
+<h3>Parts on Pallet</h3>
+<ul>
+  {% for part in parts %}
+    <li>Part revision {{part.part_revision_id}} — {{part.actual_quantity}}</li>
+  {% endfor %}
+</ul>
+
+<h3>Timeline</h3>
+<ul>
+  {% for e in events %}
+    <li>{{e.recorded_at}} — {{e.event_type}} {% if e.station_id %}(station {{e.station_id}}){% endif %}</li>
+  {% endfor %}
+</ul>
+
+<h3>Move (Most Common Action)</h3>
+<form method="post" action="/production/pallet/{{pallet.id}}/move" class="panel-form">
+  <label>Move to station</label>
+  <select name="station_id" required>
+    <option value="">-- choose station --</option>
+    {% for st in stations %}<option value="{{st.id}}">{{st.station_name}}</option>{% endfor %}
+  </select>
+  <label>Notes (optional)</label>
+  <input name="notes" placeholder="e.g. moved from staging rack B" />
+  <button class="action-btn" type="submit">MOVE</button>
+</form>
+
+<div class="action-row">
+  <a href="/entity/pallets" class="action-btn secondary">SPLIT / MERGE</a>
+  <a href="/entity/pallet_events" class="action-btn secondary">SCRAP / HOLD / COMPLETE</a>
+  <a href="/entity/pallet_revisions" class="action-btn secondary">VIEW DRAWINGS</a>
+</div>
+{% endblock %}
