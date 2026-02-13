@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -87,7 +88,7 @@ TOP_NAV = [
     ("Inventory", "/entity/consumables"),
     ("Purchasing", "/entity/purchase_requests"),
     ("Maintenance", "/entity/maintenance_requests"),
-    ("Admin", "/entity/users"),
+    ("Admin", "/admin"),
 ]
 
 ENTITY_GROUPS = {
@@ -213,6 +214,12 @@ def require_login(request: Request, db: Session = Depends(get_db)):
 
 def can_write(user, entity):
     return entity in ROLE_WRITE.get(user.role, set())
+
+
+def require_admin(user=Depends(require_login)):
+    if user.role != "admin":
+        raise HTTPException(403)
+    return user
 
 
 @app.on_event("startup")
@@ -415,6 +422,81 @@ def entity_list(entity: str, request: Request, db: Session = Depends(get_db), us
     return templates.TemplateResponse("entity_list.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "rows": rows, "cols": cols, "can_write": can_write(user, entity)})
 
 
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(get_db), user=Depends(require_admin)):
+    tab = tab if tab in {"users", "stations", "skills", "employees", "server-maintenance"} else "users"
+    tab_data = {
+        "users": db.query(models.User).order_by(models.User.id.desc()).limit(200).all(),
+        "stations": db.query(models.Station).order_by(models.Station.id.desc()).limit(200).all(),
+        "skills": db.query(models.Skill).order_by(models.Skill.id.desc()).limit(200).all(),
+        "employees": db.query(models.Employee).order_by(models.Employee.id.desc()).limit(200).all(),
+    }
+
+    branch_result = subprocess.run(["git", "branch", "--list"], capture_output=True, text=True, check=False)
+    branches = [line.replace("*", "").strip() for line in branch_result.stdout.splitlines() if line.strip()]
+    active_branch = next((line.replace("*", "").strip() for line in branch_result.stdout.splitlines() if line.startswith("*")), "")
+
+    admin_cols = {k: [c.name for c in MODEL_MAP[k].__table__.columns] for k in ["users", "stations", "skills", "employees"]}
+
+    return templates.TemplateResponse("admin_dashboard.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "active_tab": tab,
+        "tab_data": tab_data,
+        "admin_cols": admin_cols,
+        "branches": branches,
+        "active_branch": active_branch,
+        "data_paths": {
+            "DRAWING_DATA_PATH": str(DRAWING_DIR),
+            "PDF_DATA_PATH": str(PDF_DIR),
+            "PART_FILE_DATA_PATH": str(PART_FILE_DIR),
+        },
+        "message": request.query_params.get("message"),
+    })
+
+
+@app.get("/admin/{entity}/{item_id}/view", response_class=HTMLResponse)
+def admin_entity_view(entity: str, item_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
+    if entity not in {"employees", "stations", "skills", "users"}:
+        raise HTTPException(404)
+    model = MODEL_MAP.get(entity)
+    item = db.query(model).filter_by(id=item_id).first()
+    if not item:
+        raise HTTPException(404)
+    cols = [c for c in model.__table__.columns if c.name != "id"]
+    field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}, "view_only": True, "linked_user": db.query(models.User).filter_by(id=item.user_id).first() if entity == "employees" and item and item.user_id else None})
+
+
+@app.post("/admin/server-maintenance")
+async def server_maintenance(request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
+    global DRAWING_DIR, PDF_DIR, PART_FILE_DIR
+    form = await request.form()
+    action = form.get("action", "")
+    chosen_branch = form.get("branch", "")
+    message = "No action taken"
+
+    if action == "switch_branch" and chosen_branch:
+        result = subprocess.run(["git", "checkout", chosen_branch], capture_output=True, text=True, check=False)
+        message = "Branch switched" if result.returncode == 0 else f"Branch switch failed: {result.stderr.strip()}"
+    elif action == "pull_latest":
+        pull_branch = chosen_branch or subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
+        result = subprocess.run(["git", "pull", "origin", pull_branch], capture_output=True, text=True, check=False)
+        message = "Latest changes pulled" if result.returncode == 0 else f"Pull failed: {result.stderr.strip()}"
+    elif action == "update_paths":
+        DRAWING_DIR = Path(form.get("DRAWING_DATA_PATH", str(DRAWING_DIR)))
+        PDF_DIR = Path(form.get("PDF_DATA_PATH", str(PDF_DIR)))
+        PART_FILE_DIR = Path(form.get("PART_FILE_DATA_PATH", str(PART_FILE_DIR)))
+        DRAWING_DIR.mkdir(parents=True, exist_ok=True)
+        PDF_DIR.mkdir(parents=True, exist_ok=True)
+        PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
+        message = "Data paths updated for running server"
+
+    return RedirectResponse(f"/admin?tab=server-maintenance&message={message}", status_code=302)
+
+
 @app.get("/entity/{entity}/new", response_class=HTMLResponse)
 def entity_new(entity: str, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     if not can_write(user, entity):
@@ -422,7 +504,7 @@ def entity_new(entity: str, request: Request, db: Session = Depends(get_db), use
     model = MODEL_MAP.get(entity)
     cols = [c for c in model.__table__.columns if c.name != "id"]
     field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}})
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": None, "errors": {}, "field_meta": field_meta, "form_values": {}, "linked_user": None})
 
 
 @app.post("/entity/{entity}/save")
@@ -476,6 +558,26 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
         db.rollback()
         return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving. Please review values and try again."}, "field_meta": field_meta, "form_values": values}, status_code=500)
 
+    if entity == "employees":
+        logon_username = (form.get("logon_username") or "").strip()
+        logon_password = (form.get("logon_password") or "").strip()
+        if logon_username:
+            linked_user = db.query(models.User).filter_by(username=logon_username).first()
+            if linked_user and item.user_id and linked_user.id != item.user_id:
+                return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Selected logon is already linked to another employee."}, "field_meta": field_meta, "form_values": values}, status_code=422)
+            if not linked_user:
+                linked_user = models.User(username=logon_username, password_hash=hash_password(logon_password or "change-me"), role=item.role or "operator", active=item.active)
+                db.add(linked_user)
+                db.commit()
+                db.refresh(linked_user)
+            elif logon_password:
+                linked_user.password_hash = hash_password(logon_password)
+                linked_user.role = item.role or linked_user.role
+                linked_user.active = item.active
+                db.commit()
+            item.user_id = linked_user.id
+            db.commit()
+
     if entity == "pallets":
         snapshot = {"status": item.status, "station": item.current_station_id, "at": datetime.utcnow().isoformat()}
         rev = models.PalletRevision(pallet_id=item.id, revision_code=f"R{int(datetime.utcnow().timestamp())}", snapshot_json=json.dumps(snapshot), created_by=user.username)
@@ -494,7 +596,7 @@ def entity_edit(entity: str, item_id: int, request: Request, db: Session = Depen
     item = db.query(model).filter_by(id=item_id).first()
     cols = [c for c in model.__table__.columns if c.name != "id"]
     field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
-    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}})
+    return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item, "errors": {}, "field_meta": field_meta, "form_values": {}, "linked_user": db.query(models.User).filter_by(id=item.user_id).first() if entity == "employees" and item and item.user_id else None})
 
 
 @app.post("/entity/{entity}/{item_id}/delete")

@@ -18,6 +18,10 @@ class Employee(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_code: Mapped[str] = mapped_column(String(40), unique=True)
     full_name: Mapped[str] = mapped_column(String(140))
+    phone_number: Mapped[str] = mapped_column(String(40), default="")
+    email_address: Mapped[str] = mapped_column(String(140), unique=True)
+    start_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, unique=True)
     role: Mapped[str] = mapped_column(String(64), default="operator")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -31,10 +35,12 @@ class Skill(Base):
 
 class EmployeeSkill(Base):
     __tablename__ = "employee_skills"
+    __table_args__ = (UniqueConstraint("employee_id", "skill_id", name="uq_employee_skill"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
     skill_id: Mapped[int] = mapped_column(ForeignKey("skills.id"))
     level: Mapped[int] = mapped_column(Integer, default=1)
+    acquired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Part(Base):

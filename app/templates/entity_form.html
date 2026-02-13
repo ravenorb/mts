@@ -1,12 +1,22 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>{{ 'Edit' if item else 'New' }} {{entity}}</h2>
-<form method="post" action="/entity/{{entity}}/save">
-  {% if item %}<input type="hidden" name="id" value="{{item.id}}" />{% endif %}
+<h2>{% if view_only %}View{% else %}{{ 'Edit' if item else 'New' }}{% endif %} {{entity}}</h2>
+{% if not view_only %}<form method="post" action="/entity/{{entity}}/save">{% endif %}
+  {% if not view_only and item %}<input type="hidden" name="id" value="{{item.id}}" />{% endif %}
   {% if errors.get('__all__') %}
     <div class="form-error-banner">{{ errors.get('__all__') }}</div>
   {% endif %}
   {% for c in cols %}
+  {% if entity == "employees" %}
+    <div class="form-field">
+      <label>logon_username</label>
+      <input name="logon_username" value="{{ (form_values.get('logon_username') if form_values else none) or (linked_user.username if linked_user else '') }}" {% if view_only %}disabled{% endif %}/>
+    </div>
+    <div class="form-field">
+      <label>logon_password{% if view_only %} (masked){% endif %}</label>
+      <input name="logon_password" value="{% if view_only and linked_user %}********{% endif %}" {% if view_only %}disabled{% endif %}/>
+    </div>
+  {% endif %}
     {% set meta = field_meta.get(c.name, {}) %}
     {% set posted = form_values.get(c.name) if form_values else none %}
     {% set current_val = posted if posted is not none else (item|attr(c.name) if item else '') %}
@@ -14,21 +24,21 @@
       <label>{{c.name}}{% if meta.required %} *{% endif %}</label>
 
       {% if meta.fk_choices %}
-        <select name="{{c.name}}">
+        <select name="{{c.name}}" {% if view_only %}disabled{% endif %}>
           <option value="">-- select --</option>
           {% for opt in meta.fk_choices %}
             <option value="{{opt.value}}" {% if current_val|string == opt.value|string %}selected{% endif %}>{{opt.label}}</option>
           {% endfor %}
         </select>
       {% elif meta.choices %}
-        <select name="{{c.name}}">
+        <select name="{{c.name}}" {% if view_only %}disabled{% endif %}>
           <option value="">-- select --</option>
           {% for opt in meta.choices %}
             <option value="{{opt}}" {% if current_val|string == opt|string %}selected{% endif %}>{{opt}}</option>
           {% endfor %}
         </select>
       {% else %}
-        <input name="{{c.name}}" value="{{ current_val }}" />
+        <input name="{{c.name}}" value="{{ current_val }}" {% if view_only %}disabled{% endif %}/>
       {% endif %}
 
       <div class="field-help">Expected: {{ meta.expected }}</div>
@@ -37,6 +47,13 @@
       {% endif %}
     </div>
   {% endfor %}
-  <button type="submit">Save</button>
-</form>
+  {% if view_only and item %}<a class="action-btn" href="/entity/{{entity}}/{{item.id}}/edit">Edit</a>{% elif not view_only %}<button type="submit">Save</button></form>{% endif %}
+  {% if entity == "stations" and item %}
+    <div class="action-row">
+      <a class="action-btn secondary" href="/entity/consumables">Setup/View Consumables</a>
+      <a class="action-btn secondary" href="/entity/station_maintenance_tasks">Setup/View Maintenance Schedule</a>
+      <a class="action-btn secondary" href="/entity/maintenance_requests">Review Maintenance Log</a>
+      <a class="action-btn secondary" href="/entity/consumable_usage_logs">Review Consumable Log</a>
+    </div>
+  {% endif %}
 {% endblock %}

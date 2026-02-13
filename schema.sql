@@ -6,9 +6,26 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL,
   active BOOLEAN DEFAULT 1
 );
-CREATE TABLE IF NOT EXISTS employees (id INTEGER PRIMARY KEY, employee_code TEXT UNIQUE, full_name TEXT, role TEXT, active BOOLEAN DEFAULT 1);
+CREATE TABLE IF NOT EXISTS employees (
+  id INTEGER PRIMARY KEY,
+  employee_code TEXT UNIQUE,
+  full_name TEXT,
+  phone_number TEXT,
+  email_address TEXT UNIQUE,
+  start_date TIMESTAMP,
+  user_id INTEGER UNIQUE REFERENCES users(id),
+  role TEXT,
+  active BOOLEAN DEFAULT 1
+);
 CREATE TABLE IF NOT EXISTS skills (id INTEGER PRIMARY KEY, name TEXT UNIQUE, description TEXT);
-CREATE TABLE IF NOT EXISTS employee_skills (id INTEGER PRIMARY KEY, employee_id INTEGER REFERENCES employees(id), skill_id INTEGER REFERENCES skills(id), level INTEGER DEFAULT 1);
+CREATE TABLE IF NOT EXISTS employee_skills (
+  id INTEGER PRIMARY KEY,
+  employee_id INTEGER REFERENCES employees(id),
+  skill_id INTEGER REFERENCES skills(id),
+  level INTEGER DEFAULT 1,
+  acquired_at TIMESTAMP,
+  UNIQUE(employee_id, skill_id)
+);
 CREATE TABLE IF NOT EXISTS parts (id INTEGER PRIMARY KEY, part_number TEXT UNIQUE, description TEXT, created_at TIMESTAMP, active BOOLEAN DEFAULT 1);
 CREATE TABLE IF NOT EXISTS part_revisions (
   id INTEGER PRIMARY KEY,

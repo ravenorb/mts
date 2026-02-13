@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Admin Dashboard</h2>
+<div class="action-row">
+  <a class="action-btn {% if active_tab!='users' %}secondary{% endif %}" href="/admin?tab=users">Users</a>
+  <a class="action-btn {% if active_tab!='stations' %}secondary{% endif %}" href="/admin?tab=stations">Stations</a>
+  <a class="action-btn {% if active_tab!='skills' %}secondary{% endif %}" href="/admin?tab=skills">Skills</a>
+  <a class="action-btn {% if active_tab!='employees' %}secondary{% endif %}" href="/admin?tab=employees">Employees</a>
+  <a class="action-btn {% if active_tab!='server-maintenance' %}secondary{% endif %}" href="/admin?tab=server-maintenance">Server Maintenance</a>
+</div>
+
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+
+{% if active_tab in ['users','stations','skills','employees'] %}
+  {% set entity = active_tab %}
+  <a href="/entity/{{entity}}/new" class="action-btn">Add New</a>
+  <table>
+    <tr>
+      {% for c in admin_cols[entity] %}<th>{{c}}</th>{% endfor %}
+      <th>Actions</th>
+    </tr>
+    {% for r in tab_data[entity] %}
+      <tr>
+        {% for c in admin_cols[entity] %}<td>{{r|attr(c)}}</td>{% endfor %}
+        <td>
+          <a href="/entity/{{entity}}/{{r.id}}/edit">Edit</a> |
+          <a href="/admin/{{entity}}/{{r.id}}/view">View</a>
+          {% if entity == 'stations' %}
+          | <a href="/entity/consumables">Consumables</a>
+          | <a href="/entity/station_maintenance_tasks">Maintenance Schedule</a>
+          | <a href="/entity/maintenance_requests">Maintenance Log</a>
+          | <a href="/entity/consumable_usage_logs">Consumable Log</a>
+          {% endif %}
+          <form method="post" action="/entity/{{entity}}/{{r.id}}/delete" style="display:inline"><button>Delete</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+
+{% if active_tab == 'server-maintenance' %}
+  <h3>Server Maintenance</h3>
+  <form method="post" action="/admin/server-maintenance" class="panel-form">
+    <label>Branch</label>
+    <select name="branch">
+      <option value="">-- current --</option>
+      {% for b in branches %}<option value="{{b}}" {% if b == active_branch %}selected{% endif %}>{{b}}</option>{% endfor %}
+    </select>
+    <div class="action-row">
+      <button type="submit" name="action" value="switch_branch">Switch Branch</button>
+      <button type="submit" name="action" value="pull_latest">Pull Latest and Apply</button>
+    </div>
+    <h4>Data Paths</h4>
+    <label>DRAWING_DATA_PATH</label>
+    <input name="DRAWING_DATA_PATH" value="{{data_paths.DRAWING_DATA_PATH}}" />
+    <label>PDF_DATA_PATH</label>
+    <input name="PDF_DATA_PATH" value="{{data_paths.PDF_DATA_PATH}}" />
+    <label>PART_FILE_DATA_PATH</label>
+    <input name="PART_FILE_DATA_PATH" value="{{data_paths.PART_FILE_DATA_PATH}}" />
+    <button type="submit" name="action" value="update_paths">Update Data Paths</button>
+  </form>
+{% endif %}
+{% endblock %}
