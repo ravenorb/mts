@@ -27,11 +27,15 @@ Docker paths (volume-mapped in compose):
 - SQL DB: `/data/sql/mts.db`
 - Drawings: `/data/drawings`
 - PDFs/Travelers: `/data/pdfs`
+- Part revision files: `/data/part_revision_files`
+- Runtime settings (branch/path config): `/data/config/runtime_settings.json`
 
 Host paths:
 - `./data/sql`
 - `./data/drawings`
 - `./data/pdfs`
+- `./data/part_revision_files`
+- `./data/config`
 
 ## Run
 ```bash
