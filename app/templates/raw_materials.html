@@ -1,17 +1,27 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Raw Materials</h2>
-<form method="post" action="/inventory/raw-materials/add" class="panel-form">
-  <h3>Add Material</h3>
-  <input name="gauge" placeholder="Gauge" required />
-  <input name="length" placeholder="Length" />
-  <input name="width" placeholder="Width" />
-  <input name="qty_on_hand" placeholder="Qty on hand" />
-  <input name="qty_on_request" placeholder="Qty on request" />
-  <input name="qty_on_order" placeholder="Qty on order" />
-  <select name="storage_location_id"><option value="">Storage Location</option>{% for l in locations %}<option value="{{l.id}}">{{l.id}}</option>{% endfor %}</select>
-  <button>Add Material</button>
-</form>
+<div class="page-toolbar">
+  <h2>Raw Materials</h2>
+  <button type="button" class="action-btn" onclick="document.getElementById('add-raw-material-dialog').showModal()">Add New</button>
+</div>
+
+<dialog id="add-raw-material-dialog" class="modal-dialog">
+  <form method="post" action="/inventory/raw-materials/add" class="panel-form">
+    <h3>Add Material</h3>
+    <input name="gauge" placeholder="Gauge" required />
+    <input name="length" placeholder="Length" />
+    <input name="width" placeholder="Width" />
+    <input name="qty_on_hand" placeholder="Qty on hand" />
+    <input name="qty_on_request" placeholder="Qty on request" />
+    <input name="qty_on_order" placeholder="Qty on order" />
+    <select name="storage_location_id"><option value="">Storage Location</option>{% for l in locations %}<option value="{{l.id}}">{{l.id}}</option>{% endfor %}</select>
+    <div class="action-row">
+      <button type="submit">Save</button>
+      <button type="button" onclick="document.getElementById('add-raw-material-dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <table>
   <tr><th>Material ID</th><th>Gauge</th><th>Length</th><th>Width</th><th>Qty On Hand</th><th>Qty On Request</th><th>Qty On Order</th><th>Storage Location ID</th><th>Actions</th></tr>
   {% for r in rows %}

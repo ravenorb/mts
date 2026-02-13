@@ -1,17 +1,27 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Storage Locations</h2>
-<form method="post" action="/inventory/locations/add" class="panel-form">
-  <h3>Add Storage Location</h3>
-  <label for="location_description">Location Description</label>
-  <input id="location_description" name="location_description" required />
-  <label><input type="checkbox" name="pallet_storage" /> Pallet storage</label>
-  <label for="shelf_count"># of Shelves</label>
-  <input id="shelf_count" type="number" name="shelf_count" min="1" value="1" required />
-  <label for="bin_count"># of Bins</label>
-  <input id="bin_count" type="number" name="bin_count" min="1" value="1" required />
-  <button type="submit">Add Storage Location</button>
-</form>
+<div class="page-toolbar">
+  <h2>Storage Locations</h2>
+  <button type="button" class="action-btn" onclick="document.getElementById('add-storage-location-dialog').showModal()">Add New</button>
+</div>
+
+<dialog id="add-storage-location-dialog" class="modal-dialog">
+  <form method="post" action="/inventory/locations/add" class="panel-form">
+    <h3>Add Storage Location</h3>
+    <label for="location_description">Location Description</label>
+    <input id="location_description" name="location_description" required />
+    <label><input type="checkbox" name="pallet_storage" /> Pallet storage</label>
+    <label for="shelf_count"># of Shelves</label>
+    <input id="shelf_count" type="number" name="shelf_count" min="1" value="1" required />
+    <label for="bin_count"># of Bins</label>
+    <input id="bin_count" type="number" name="bin_count" min="1" value="1" required />
+    <div class="action-row">
+      <button type="submit">Save</button>
+      <button type="button" onclick="document.getElementById('add-storage-location-dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <table>
   <tr><th>Location ID</th><th>Location Description</th><th>Pallet Storage</th><th># of Shelves</th><th># of Bins</th><th>Actions</th></tr>
   {% for r in rows %}

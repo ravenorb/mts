@@ -8,14 +8,29 @@
 </head>
 <body>
 <header class="top-header">
-  <h1>MTS Control Surface</h1>
   {% if user %}
   <nav class="top-nav">
     {% for label, href in top_nav %}
-      <a href="{{href}}">{{label}}</a>
+      {% set is_active = request.url.path == href or (href != '/' and request.url.path.startswith(href)) %}
+      <a class="{% if is_active %}active{% endif %}" href="{{href}}">{{label}}</a>
     {% endfor %}
     <a href="/logout">Logout</a>
   </nav>
+  {% if request.url.path.startswith('/inventory') %}
+  <nav class="section-nav" aria-label="Inventory sections">
+    {% set inventory_sections = [
+      ('Storage', '/inventory/locations'),
+      ('Raw Materials', '/inventory/raw-materials'),
+      ('Consumables', '/inventory/consumables'),
+      ('Parts', '/inventory/parts'),
+      ('Delivered Parts', '/inventory/delivered-parts'),
+      ('Scrap Steel', '/inventory/scrap-steel')
+    ] %}
+    {% for label, href in inventory_sections %}
+      <a class="{% if request.url.path == href or request.url.path.startswith(href + '/') %}active{% endif %}" href="{{href}}">{{label}}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
   {% endif %}
 </header>
 {% if user and entity_groups %}

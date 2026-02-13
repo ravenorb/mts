@@ -46,3 +46,10 @@ button,input[type="submit"],input[type="button"],.action-btn{color:#001f54!impor
 button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .action-btn{background:#e2e8f0;border:1px solid #94a3b8}
 .action-btn.secondary{background:#dbeafe}
+
+.top-nav a.active,.section-nav a.active{background:#bfdbfe;border:1px solid #60a5fa;color:#0f172a!important}
+.section-nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.section-nav a{color:#001f54;text-decoration:none;background:#e2e8f0;border:1px solid #94a3b8;padding:7px 10px;border-radius:5px;font-size:13px}
+.page-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.modal-dialog{border:none;border-radius:8px;padding:0;max-width:620px;width:calc(100% - 24px)}
+.modal-dialog::backdrop{background:rgba(15,23,42,.45)}
