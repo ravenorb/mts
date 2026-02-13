@@ -9,32 +9,22 @@ body{font-family:Arial,sans-serif;margin:0;background:#f4f5f7;color:#111}
 .main-content{margin-left:240px;padding:14px}
 .cards{display:flex;gap:10px;flex-wrap:wrap}
 .card{background:#fff;border:1px solid #ddd;padding:12px;min-width:160px;border-radius:6px}
-.card .label{font-size:12px;color:#666}
-.card .value{font-size:24px;font-weight:bold}
-.card.warning{border-color:#f59e0b}
-.card.danger{border-color:#dc2626;background:#fff1f2}
+.card .label{font-size:12px;color:#666}.card .value{font-size:24px;font-weight:bold}
+.card.warning{border-color:#f59e0b}.card.danger{border-color:#dc2626;background:#fff1f2}
 .station-list{background:#fff;padding:8px;border:1px solid #ddd;border-radius:6px;max-width:800px}
-.station-row{display:flex;align-items:center;gap:10px;padding:6px 0}
-.station-name{width:140px}
-.station-count{width:40px;text-align:right}
-.bar{flex:1;background:#e5e7eb;height:14px;border-radius:8px;overflow:hidden}
-.bar span{display:block;height:100%;background:#1d4ed8}
-table{border-collapse:collapse;background:#fff;width:100%}
-th,td{border:1px solid #ccc;padding:6px;font-size:12px;vertical-align:top}
-.form-field{margin-bottom:10px;display:flex;flex-direction:column;max-width:600px}
-.form-field label{font-weight:600;margin-bottom:4px}
-.form-field input,.form-field select,button{padding:9px;border:1px solid #bbb;border-radius:4px;background:#fff}
-.field-help{font-size:12px;color:#555;margin-top:3px}
-.field-error{font-size:12px;color:#b00020;margin-top:3px}
+.station-row{display:flex;align-items:center;gap:10px;padding:6px 0}.station-name{width:140px}.station-count{width:40px;text-align:right}
+.bar{flex:1;background:#e5e7eb;height:14px;border-radius:8px;overflow:hidden}.bar span{display:block;height:100%;background:#1d4ed8}
+table{border-collapse:collapse;background:#fff;width:100%}th,td{border:1px solid #ccc;padding:6px;font-size:12px;vertical-align:top}
+.form-field{margin-bottom:10px;display:flex;flex-direction:column;max-width:600px}.form-field label{font-weight:600;margin-bottom:4px}
+.form-field input,.form-field select,button,input[type=file]{padding:9px;border:1px solid #bbb;border-radius:4px;background:#fff}
+.field-help{font-size:12px;color:#555;margin-top:3px}.field-error{font-size:12px;color:#b00020;margin-top:3px}
 .form-error-banner{background:#ffe5e8;border:1px solid #ffb3bc;color:#8b0a1a;padding:8px;border-radius:4px;margin-bottom:10px;max-width:680px}
 .ok-banner{background:#e8fff0;border:1px solid #86efac;color:#0b6131;padding:8px;border-radius:4px;margin-bottom:10px;max-width:680px}
 .scan-form,.panel-form{display:flex;flex-direction:column;gap:7px;max-width:560px;background:#fff;padding:12px;border:1px solid #ddd;border-radius:6px;margin-bottom:12px}
 .action-btn{display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:10px 12px;border-radius:5px;margin:5px 0;font-weight:600}
-.action-btn.secondary{background:#374151}
-.action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.grid-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
-.quick-pallet{display:flex;flex-direction:column;gap:4px;padding:10px;background:#fff;border:1px solid #ddd;border-radius:6px;color:#111;text-decoration:none}
-@media (max-width: 920px){
-  .side-nav{position:static;width:auto;border-right:none;top:auto}
-  .main-content{margin-left:0}
-}
+.action-btn.secondary{background:#374151}.action-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.grid-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.quick-pallet{display:flex;flex-direction:column;gap:4px;padding:10px;background:#fff;border:1px solid #ddd;border-radius:6px;color:#111;text-decoration:none}
+.action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}
+.check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;background:#f8fafc;padding:8px;border:1px solid #d9d9d9;border-radius:5px}
+.login-body{display:flex;align-items:center;justify-content:center;min-height:100vh}.login-card{width:min(420px,90vw)}
+@media (max-width: 920px){.side-nav{position:static;width:auto;border-right:none;top:auto}.main-content{margin-left:0}}

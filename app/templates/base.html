@@ -8,12 +8,10 @@
 </head>
 <body>
 <header class="top-header">
-  <h1>MTS Control Surface</h1>
+  <h1>MTS Production Control Surface</h1>
   {% if user %}
   <nav class="top-nav">
-    {% for label, href in top_nav %}
-      <a href="{{href}}">{{label}}</a>
-    {% endfor %}
+    {% for label, href in top_nav %}<a href="{{href}}">{{label}}</a>{% endfor %}
     <a href="/logout">Logout</a>
   </nav>
   {% endif %}
@@ -22,9 +20,7 @@
 <aside class="side-nav">
   {% for group, entries in entity_groups.items() %}
     <h4>{{group}}</h4>
-    {% for e in entries %}
-      <a href="/entity/{{e}}">{{e}}</a>
-    {% endfor %}
+    {% for e in entries %}<a href="/entity/{{e}}">{{e}}</a>{% endfor %}
   {% endfor %}
 </aside>
 {% endif %}

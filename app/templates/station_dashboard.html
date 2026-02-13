@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Station Dashboard — {{station.station_name}}</h2>
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+
+<div class="cards">{% if next_pallet %}<div class="card"><div class="label">Next pallet in queue</div><div class="value">Pallet {{next_pallet.pallet_id}}</div></div>{% else %}<div class="card warning"><div class="label">Queue</div><div>No queued pallets</div></div>{% endif %}</div>
+
+<div class="action-grid">
+  {% for action,label in [('go_break','Go on Break'),('end_shift','End Shift'),('start_work','Start Work on Pallet'),('stop_work','Stop Work on Pallet'),('maintenance_problem','Report Maintenance Problem'),('engineering_issue','Report Engineering Issue'),('consumable_usage','Log Consumable Usage'),('request_reorder','Request Reorder of Consumable')] %}
+  <form method="post" action="/stations/{{station.id}}/action" class="panel-form">
+    <input type="hidden" name="action" value="{{action}}" />
+    <h4>{{label}}</h4>
+    <label>Pallet number (optional)</label><input name="pallet_code" placeholder="P-10452" />
+    <label>Notes</label><input name="notes" />
+    <label>Qty completed</label><input type="number" step="0.01" name="quantity_completed" value="0" />
+    <label>Scrap qty</label><input type="number" step="0.01" name="quantity_scrap" value="0" />
+    <label>Split to pallet</label><input name="split_to_pallet_code" />
+    <label>Combine with pallet</label><input name="combine_with_pallet_code" />
+    <button type="submit">{{label}}</button>
+  </form>
+  {% endfor %}
+</div>
+
+<h3>Manage Pallets</h3>
+<p>Use <strong>Stop Work on Pallet</strong> form to split/combine pallets and report scrap. Use <strong>/production/pallet</strong> for move/hold/complete flow.</p>
+
+<h3>Recent Station Activity</h3>
+<table><tr><th>Time</th><th>Event</th><th>Pallet</th><th>Notes</th><th>Completed</th><th>Scrap</th></tr>
+{% for log in logs %}<tr><td>{{log.logged_at}}</td><td>{{log.event_type}}</td><td>{{log.pallet_id or '-'}}</td><td>{{log.notes}}</td><td>{{log.quantity_completed}}</td><td>{{log.quantity_scrap}}</td></tr>{% endfor %}</table>
+{% endblock %}

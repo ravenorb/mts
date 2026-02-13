@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Stations</h2>
+<div class="grid-list">
+  {% for st in stations %}
+  <a class="quick-pallet" href="/stations/{{st.id}}"><strong>{{st.station_name}}</strong><span>Open station dashboard</span></a>
+  {% endfor %}
+</div>
+{% endblock %}

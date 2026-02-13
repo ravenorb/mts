@@ -74,6 +74,24 @@ class PartProcessDefinition(Base):
     manual_weld_drawing_path: Mapped[str] = mapped_column(Text, default="")
 
 
+class PartRevisionFile(Base):
+    __tablename__ = "part_revision_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_revision_id: Mapped[int] = mapped_column(ForeignKey("part_revisions.id"))
+    file_type: Mapped[str] = mapped_column(String(32))
+    file_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(Text)
+    uploaded_by: Mapped[str] = mapped_column(String(80), default="system")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PartRevisionFileStation(Base):
+    __tablename__ = "part_revision_file_stations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_revision_file_id: Mapped[int] = mapped_column(ForeignKey("part_revision_files.id"))
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+
+
 class BillOfMaterial(Base):
     __tablename__ = "boms"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -135,6 +153,35 @@ class Station(Base):
     station_name: Mapped[str] = mapped_column(String(80), unique=True)
     skill_required: Mapped[str] = mapped_column(String(80), default="")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class EngineeringQuestion(Base):
+    __tablename__ = "engineering_questions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    part_revision_id: Mapped[int | None] = mapped_column(ForeignKey("part_revisions.id"), nullable=True)
+    pallet_id: Mapped[int | None] = mapped_column(ForeignKey("pallets.id"), nullable=True)
+    question_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="open")
+    created_by: Mapped[str] = mapped_column(String(80), default="operator")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class StationWorkLog(Base):
+    __tablename__ = "station_work_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    pallet_id: Mapped[int | None] = mapped_column(ForeignKey("pallets.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(40))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    quantity_completed: Mapped[float] = mapped_column(Float, default=0)
+    quantity_scrap: Mapped[float] = mapped_column(Float, default=0)
+    combine_with_pallet_code: Mapped[str] = mapped_column(String(80), default="")
+    split_to_pallet_code: Mapped[str] = mapped_column(String(80), default="")
+    logged_by: Mapped[str] = mapped_column(String(80), default="operator")
+    logged_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Queue(Base):

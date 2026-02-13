@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Engineering Dashboard</h2>
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+<div class="action-row">
+  <a class="action-btn" href="/entity/parts/new">Create Part</a>
+  <a class="action-btn" href="/entity/part_revisions/new">Create Revision</a>
+  <a class="action-btn" href="/entity/part_revisions">Edit Revision</a>
+  <a class="action-btn" href="/entity/part_revisions">View Part Revision</a>
+  <a class="action-btn secondary" href="/engineering/machine-programs">Add Machine Program File</a>
+</div>
+
+<h3>Queue: Parts with no Revision</h3>
+<ul>
+  {% for p in pending_parts %}<li>{{p.part_number}} — {{p.description}}</li>{% else %}<li>No pending parts.</li>{% endfor %}
+</ul>
+
+<h3>Queue: Station Engineering Questions</h3>
+<table>
+  <tr><th>Created</th><th>Station</th><th>Pallet</th><th>Question</th><th>Action</th></tr>
+  {% for q in open_questions %}
+    <tr>
+      <td>{{q.created_at}}</td><td>{{q.station_id}}</td><td>{{q.pallet_id or '-'}}</td><td>{{q.question_text}}</td>
+      <td><form method="post" action="/engineering/questions/{{q.id}}/resolve"><button>Mark Resolved</button></form></td>
+    </tr>
+  {% else %}<tr><td colspan="5">No open questions.</td></tr>{% endfor %}
+</table>
+
+<h3>Upload Revision Files (part revision specific)</h3>
+<form method="post" action="/engineering/revision-file" enctype="multipart/form-data" class="panel-form">
+  <label>Part revision</label>
+  <select name="part_revision_id" required>
+    <option value="">-- select revision --</option>
+    {% for p in part_revisions %}<option value="{{p.id}}">{{p.id}} — Rev {{p.revision_code}}</option>{% endfor %}
+  </select>
+  <label>File type</label>
+  <select name="file_type" required>
+    <option value="laser">Laser cut file</option><option value="waterjet">Waterjet cut file</option><option value="welder">Welder module file</option><option value="drawing">Drawing file</option><option value="pdf">PDF file</option>
+  </select>
+  <label>File</label><input type="file" name="upload" required />
+  <label>Make available to stations</label>
+  <div class="check-grid">{% for st in stations %}<label><input type="checkbox" name="station_ids" value="{{st.id}}" /> {{st.station_name}}</label>{% endfor %}</div>
+  <button type="submit">Upload File</button>
+</form>
+
+<h3>Uploaded Revision Files</h3>
+<table>
+  <tr><th>Uploaded</th><th>Part Revision</th><th>Type</th><th>Filename</th><th>Available To</th></tr>
+  {% for f in files %}<tr><td>{{f.uploaded_at}}</td><td>{{f.part_revision_id}}</td><td>{{f.file_type}}</td><td>{{f.file_name}}</td><td>{{', '.join(available_map.get(f.id, [])) or 'Not assigned'}}</td></tr>{% endfor %}
+</table>
+{% endblock %}

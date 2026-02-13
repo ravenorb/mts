@@ -2,7 +2,8 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -11,24 +12,28 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import models
 from .auth import hash_password, verify_password
 from .database import Base, engine, get_db
-from . import models
 
 app = FastAPI(title="Manufacturing Tracking System")
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY", "change-me"))
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
-DRAWING_DIR = Path(os.getenv("DRAWING_DATA_PATH", "/data/drawings"))
 PDF_DIR = Path(os.getenv("PDF_DATA_PATH", "/data/pdfs"))
-DRAWING_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DATA_PATH", "/data/uploads"))
 PDF_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_MAP = {
     "parts": models.Part,
     "part_revisions": models.PartRevision,
     "part_process_definitions": models.PartProcessDefinition,
+    "part_revision_files": models.PartRevisionFile,
+    "part_revision_file_stations": models.PartRevisionFileStation,
+    "engineering_questions": models.EngineeringQuestion,
+    "station_work_logs": models.StationWorkLog,
     "boms": models.BillOfMaterial,
     "cut_sheets": models.CutSheet,
     "cut_sheet_revisions": models.CutSheetRevision,
@@ -53,16 +58,16 @@ MODEL_MAP = {
 }
 
 ROLE_WRITE = {
-    "operator": {"pallets", "pallet_parts", "pallet_events", "queues"},
-    "maintenance": {"maintenance_requests", "station_maintenance_tasks", "pallet_events"},
+    "operator": {"pallets", "pallet_parts", "pallet_events", "queues", "station_work_logs", "engineering_questions", "consumable_usage_logs"},
+    "maintenance": {"maintenance_requests", "station_maintenance_tasks", "pallet_events", "station_work_logs"},
     "purchasing": {"consumables", "purchase_requests", "purchase_request_lines", "consumable_usage_logs"},
     "planner": set(MODEL_MAP.keys()) - {"users"},
     "admin": set(MODEL_MAP.keys()),
 }
 
 FIELD_CHOICES = {
-    ("users", "role"): ["operator", "maintenance", "purchasing", "planner", "admin"],
-    ("employees", "role"): ["operator", "maintenance", "purchasing", "planner", "admin"],
+    ("users", "role"): ["operator", "maintenance", "purchasing", "planner", "admin", "engineer"],
+    ("employees", "role"): ["operator", "maintenance", "purchasing", "planner", "admin", "engineer"],
     ("part_revisions", "is_current"): ["true", "false"],
     ("cut_sheet_revisions", "is_current"): ["true", "false"],
     ("stations", "active"): ["true", "false"],
@@ -72,13 +77,14 @@ FIELD_CHOICES = {
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
     ("maintenance_requests", "status"): ["open", "in_progress", "closed"],
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
+    ("engineering_questions", "status"): ["open", "resolved"],
 }
 
 TOP_NAV = [
     ("Dashboard", "/"),
     ("Production", "/production"),
-    ("Engineering", "/engineering/upload"),
-    ("Stations", "/entity/stations"),
+    ("Engineering", "/engineering"),
+    ("Stations", "/stations"),
     ("Inventory", "/entity/consumables"),
     ("Purchasing", "/entity/purchase_requests"),
     ("Maintenance", "/entity/maintenance_requests"),
@@ -87,11 +93,44 @@ TOP_NAV = [
 
 ENTITY_GROUPS = {
     "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
-    "Engineering": ["parts", "part_revisions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
+    "Engineering": ["parts", "part_revisions", "part_process_definitions", "part_revision_files", "engineering_questions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
+    "Stations": ["stations", "station_work_logs"],
     "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
     "Inventory": ["consumables", "consumable_usage_logs", "purchase_request_lines"],
     "People": ["employees", "skills", "employee_skills", "users"],
 }
+
+ALLOWED_UPLOAD_TYPES = {
+    "laser": [".nc", ".dxf", ".dwg", ".txt", ".tap"],
+    "waterjet": [".nc", ".dxf", ".dwg", ".txt"],
+    "welder": [".mod", ".src", ".txt", ".zip"],
+    "drawing": [".dwg", ".dxf", ".step", ".stp", ".sldprt", ".sldasm"],
+    "pdf": [".pdf"],
+}
+
+
+def get_current_user(request: Request, db: Session):
+    uid = request.session.get("uid")
+    if not uid:
+        return None
+    return db.query(models.User).filter_by(id=uid, active=True).first()
+
+
+def create_default_admin(db: Session):
+    if db.query(models.User).count() == 0:
+        db.add(models.User(username="admin", password_hash=hash_password("admin123"), role="admin", active=True))
+        db.commit()
+
+
+def require_login(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        raise HTTPException(status_code=401)
+    return user
+
+
+def can_write(user, entity):
+    return entity in ROLE_WRITE.get(user.role, set())
 
 
 def fk_choices(col, db: Session):
@@ -100,7 +139,7 @@ def fk_choices(col, db: Session):
         return None
     table_name = fk.column.table.name
     label_columns = ["pallet_code", "station_name", "part_number", "revision_code", "cut_sheet_number", "username", "employee_code", "description", "name"]
-    for entity_name, model in MODEL_MAP.items():
+    for _, model in MODEL_MAP.items():
         if model.__table__.name != table_name:
             continue
         rows = db.query(model).limit(300).all()
@@ -119,33 +158,25 @@ def build_field_meta(entity: str, col, db: Session):
 
     expected = "Free text"
     if isinstance(col.type, Integer):
-        expected = "Whole number (example: 5)"
+        expected = "Whole number"
     elif isinstance(col.type, Float):
-        expected = "Number (example: 12.5)"
+        expected = "Number"
     elif isinstance(col.type, Boolean):
         expected = "Choose true or false"
     elif isinstance(col.type, DateTime):
-        expected = "Date/time in ISO format (example: 2026-01-31T14:30:00)"
+        expected = "ISO datetime"
     elif isinstance(col.type, String):
-        expected = f"Text up to {col.type.length} characters" if col.type.length else "Text"
+        expected = f"Text up to {col.type.length}" if col.type.length else "Text"
     elif isinstance(col.type, Text):
         expected = "Long text"
 
     required = (not col.nullable) and col.default is None and col.server_default is None
-
-    return {
-        "name": col.name,
-        "required": required,
-        "expected": expected,
-        "choices": choices,
-        "fk_choices": fk_choices(col, db),
-    }
+    return {"required": required, "expected": expected, "choices": choices, "fk_choices": fk_choices(col, db)}
 
 
 def parse_field_value(entity: str, col, raw_value):
     if raw_value is None:
         return None
-
     val = raw_value.strip() if isinstance(raw_value, str) else raw_value
     if val == "":
         return None
@@ -158,56 +189,24 @@ def parse_field_value(entity: str, col, raw_value):
         if lowered in {"false", "0", "no", "off"}:
             return False
         raise ValueError("must be true or false")
-
     if choices and str(val) not in choices:
         raise ValueError(f"must be one of: {', '.join(choices)}")
-
     if isinstance(col.type, Integer):
-        try:
-            return int(val)
-        except ValueError as exc:
-            raise ValueError("must be a whole number") from exc
-
+        return int(val)
     if isinstance(col.type, Float):
-        try:
-            return float(val)
-        except ValueError as exc:
-            raise ValueError("must be a number") from exc
-
+        return float(val)
     if isinstance(col.type, DateTime):
-        try:
-            return datetime.fromisoformat(str(val))
-        except ValueError as exc:
-            raise ValueError("must be an ISO date/time like 2026-01-31T14:30:00") from exc
-
-    if isinstance(col.type, String) and col.type.length and len(str(val)) > col.type.length:
-        raise ValueError(f"must be at most {col.type.length} characters")
-
-    return val
+        return datetime.fromisoformat(str(val))
+    return str(val)
 
 
-def create_default_admin(db: Session):
-    if not db.query(models.User).filter_by(username="admin").first():
-        db.add(models.User(username="admin", password_hash=hash_password("admin123"), role="admin"))
-        db.commit()
-
-
-def get_current_user(request: Request, db: Session):
-    uid = request.session.get("uid")
-    if not uid:
-        return None
-    return db.query(models.User).filter_by(id=uid, active=True).first()
-
-
-def require_login(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request, db)
-    if not user:
-        raise HTTPException(status_code=401)
-    return user
-
-
-def can_write(user, entity):
-    return entity in ROLE_WRITE.get(user.role, set())
+def create_traveler_file(db: Session, pallet_id: int):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).all()
+    lines = [f"Traveler - Pallet {pallet.pallet_code}", f"Status: {pallet.status}", f"Generated: {datetime.utcnow().isoformat()}", "", "Parts:"]
+    for p in parts:
+        lines.append(f"Part Revision {p.part_revision_id}: qty {p.actual_quantity}")
+    (PDF_DIR / f"traveler_{pallet.pallet_code}.txt").write_text("\n".join(lines))
 
 
 @app.on_event("startup")
@@ -224,15 +223,148 @@ def root(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/login", status_code=302)
     active = db.query(models.Pallet).filter(models.Pallet.status != "complete").count()
     hold = db.query(models.Pallet).filter(models.Pallet.status == "hold").count()
-    bottlenecks = db.query(models.Queue.station_id, func.count(models.Queue.id)).group_by(models.Queue.station_id).all()
-    maintenance_open = db.query(models.MaintenanceRequest).filter_by(status="open").count()
-    low_stock = db.query(models.Consumable).filter(models.Consumable.qty_on_hand <= models.Consumable.reorder_point).count()
     staged = db.query(models.Pallet).filter(models.Pallet.status == "staged").count()
     in_progress = db.query(models.Pallet).filter(models.Pallet.status == "in_progress").count()
+    maintenance_open = db.query(models.MaintenanceRequest).filter_by(status="open").count()
+    low_stock = db.query(models.Consumable).filter(models.Consumable.qty_on_hand <= models.Consumable.reorder_point).count()
     station_rows = db.query(models.Station.id, models.Station.station_name, func.count(models.Queue.id)).outerjoin(models.Queue, models.Queue.station_id == models.Station.id).group_by(models.Station.id, models.Station.station_name).all()
     max_load = max([r[2] for r in station_rows], default=1)
     station_load = [{"id": r[0], "name": r[1], "load": r[2], "percent": int((r[2] / max_load) * 100) if max_load else 0} for r in station_rows]
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "active": active, "hold": hold, "staged": staged, "in_progress": in_progress, "bottlenecks": bottlenecks, "station_load": station_load, "maintenance_open": maintenance_open, "low_stock": low_stock})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "active": active, "hold": hold, "staged": staged, "in_progress": in_progress, "station_load": station_load, "maintenance_open": maintenance_open, "low_stock": low_stock})
+
+
+@app.get("/engineering", response_class=HTMLResponse)
+def engineering_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    pending_parts = db.query(models.Part).outerjoin(models.PartRevision, models.Part.id == models.PartRevision.part_id).filter(models.PartRevision.id.is_(None)).order_by(models.Part.created_at.desc()).all()
+    open_questions = db.query(models.EngineeringQuestion).filter_by(status="open").order_by(models.EngineeringQuestion.created_at.asc()).limit(100).all()
+    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    files = db.query(models.PartRevisionFile).order_by(models.PartRevisionFile.uploaded_at.desc()).limit(200).all()
+    station_links = db.query(models.PartRevisionFileStation).all()
+    station_name = {s.id: s.station_name for s in stations}
+    available_map = {}
+    for link in station_links:
+        available_map.setdefault(link.part_revision_file_id, []).append(station_name.get(link.station_id, str(link.station_id)))
+    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pending_parts": pending_parts, "open_questions": open_questions, "part_revisions": part_revisions, "stations": stations, "files": files, "available_map": available_map, "message": request.query_params.get("message")})
+
+
+@app.post("/engineering/revision-file")
+async def upload_revision_file(
+    part_revision_id: int = Form(...),
+    file_type: str = Form(...),
+    station_ids: list[int] = Form([]),
+    upload: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    if file_type not in ALLOWED_UPLOAD_TYPES:
+        raise HTTPException(422, "Unsupported file type")
+    suffix = Path(upload.filename or "").suffix.lower()
+    if suffix and suffix not in ALLOWED_UPLOAD_TYPES[file_type]:
+        raise HTTPException(422, f"File extension {suffix} is not allowed for {file_type}")
+
+    rev_folder = UPLOAD_DIR / f"part_revision_{part_revision_id}"
+    rev_folder.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{int(datetime.utcnow().timestamp())}_{Path(upload.filename or 'upload.bin').name}"
+    destination = rev_folder / safe_name
+    destination.write_bytes(await upload.read())
+
+    record = models.PartRevisionFile(part_revision_id=part_revision_id, file_type=file_type, file_name=upload.filename or safe_name, stored_path=str(destination), uploaded_by=user.username)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    for station_id in station_ids:
+        db.add(models.PartRevisionFileStation(part_revision_file_id=record.id, station_id=station_id))
+    db.commit()
+
+    process = db.query(models.PartProcessDefinition).filter_by(part_revision_id=part_revision_id).first()
+    if not process:
+        process = models.PartProcessDefinition(part_revision_id=part_revision_id)
+        db.add(process)
+    if file_type == "laser":
+        process.laser_required, process.laser_program_path = True, str(destination)
+    elif file_type == "waterjet":
+        process.waterjet_required, process.waterjet_program_path = True, str(destination)
+    elif file_type == "welder":
+        process.robotic_weld_required, process.robotic_weld_program_path = True, str(destination)
+    elif file_type == "drawing":
+        process.manual_weld_required, process.manual_weld_drawing_path = True, str(destination)
+    db.commit()
+
+    return RedirectResponse("/engineering?message=Revision+file+uploaded", status_code=302)
+
+
+@app.get("/engineering/machine-programs", response_class=HTMLResponse)
+def machine_program_todo(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("machine_program_todo.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS})
+
+
+@app.post("/engineering/questions/{question_id}/resolve")
+def resolve_question(question_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    q = db.query(models.EngineeringQuestion).filter_by(id=question_id).first()
+    if q:
+        q.status = "resolved"
+        q.resolved_by = user.username
+        q.resolved_at = datetime.utcnow()
+        db.commit()
+    return RedirectResponse("/engineering", status_code=302)
+
+
+@app.get("/stations", response_class=HTMLResponse)
+def station_directory(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    return templates.TemplateResponse("stations.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "stations": stations})
+
+
+@app.get("/stations/{station_id}", response_class=HTMLResponse)
+def station_dashboard(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+    queue = db.query(models.Queue).filter_by(station_id=station_id).order_by(models.Queue.priority_score.desc(), models.Queue.id.asc()).all()
+    next_pallet = queue[0] if queue else None
+    logs = db.query(models.StationWorkLog).filter_by(station_id=station_id).order_by(models.StationWorkLog.logged_at.desc()).limit(20).all()
+    return templates.TemplateResponse("station_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station": station, "queue": queue, "next_pallet": next_pallet, "logs": logs, "message": request.query_params.get("message")})
+
+
+@app.post("/stations/{station_id}/action")
+async def station_action(station_id: int, request: Request, action: str = Form(...), pallet_code: str = Form(""), notes: str = Form(""), quantity_completed: float = Form(0), quantity_scrap: float = Form(0), combine_with_pallet_code: str = Form(""), split_to_pallet_code: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+
+    pallet = db.query(models.Pallet).filter_by(pallet_code=pallet_code).first() if pallet_code else None
+    db.add(models.StationWorkLog(
+        station_id=station_id,
+        pallet_id=pallet.id if pallet else None,
+        event_type=action,
+        notes=notes,
+        quantity_completed=quantity_completed,
+        quantity_scrap=quantity_scrap,
+        combine_with_pallet_code=combine_with_pallet_code,
+        split_to_pallet_code=split_to_pallet_code,
+        logged_by=user.username,
+    ))
+
+    if action in {"start_work", "stop_work"} and pallet:
+        db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type=action, quantity=quantity_completed, recorded_by=user.username, notes=notes))
+
+    if action == "engineering_issue":
+        db.add(models.EngineeringQuestion(station_id=station_id, pallet_id=pallet.id if pallet else None, question_text=notes or "Engineering issue reported", created_by=user.username, status="open"))
+
+    if action == "maintenance_problem":
+        db.add(models.MaintenanceRequest(station_id=station_id, requested_by=user.username, issue_description=notes or "Maintenance issue reported", priority="normal", status="open"))
+
+    if action == "request_reorder":
+        consumable = db.query(models.Consumable).order_by(models.Consumable.id.asc()).first()
+        if consumable:
+            req = models.PurchaseRequest(requested_by=user.username, status="open")
+            db.add(req)
+            db.flush()
+            db.add(models.PurchaseRequestLine(purchase_request_id=req.id, consumable_id=consumable.id, quantity=max(quantity_completed, 1)))
+
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Action+saved", status_code=302)
 
 
 @app.get("/production", response_class=HTMLResponse)
@@ -246,7 +378,7 @@ def production(request: Request, q: str = "", db: Session = Depends(get_db), use
     next_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).limit(12).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("production.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "query": q, "found": pallet, "next_pallets": next_pallets, "stations": stations, "part_revisions": part_revisions, "errors": {}})
+    return templates.TemplateResponse("production.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "query": q, "found": pallet, "next_pallets": next_pallets, "stations": stations, "part_revisions": part_revisions})
 
 
 @app.get("/production/pallet/{pallet_id}", response_class=HTMLResponse)
@@ -257,7 +389,7 @@ def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db
     parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).all()
     events = db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).order_by(models.PalletEvent.recorded_at.asc()).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
-    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "parts": parts, "events": events, "stations": stations, "errors": {}})
+    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "parts": parts, "events": events, "stations": stations})
 
 
 @app.post("/production/pallet/{pallet_id}/move")
@@ -275,8 +407,6 @@ def pallet_move(pallet_id: int, station_id: int = Form(...), notes: str = Form("
 
 @app.post("/production/create-pallet")
 def production_create_pallet(part_revision_id: int = Form(...), quantity: float = Form(...), location_station_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
-    if quantity <= 0:
-        raise HTTPException(422, "Quantity must be greater than zero")
     code = f"P-{int(datetime.utcnow().timestamp())}"
     pallet = models.Pallet(pallet_code=code, pallet_type="manual", status="staged", current_station_id=location_station_id, created_by=user.username)
     db.add(pallet)
@@ -287,37 +417,6 @@ def production_create_pallet(part_revision_id: int = Form(...), quantity: float 
     db.commit()
     create_traveler_file(db, pallet.id)
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
-
-
-@app.get("/engineering/upload", response_class=HTMLResponse)
-def engineering_upload_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": None, "error": None})
-
-
-@app.post("/engineering/upload", response_class=HTMLResponse)
-def engineering_upload_save(request: Request, part_revision_id: int = Form(...), program_type: str = Form(...), program_path: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
-    process = db.query(models.PartProcessDefinition).filter_by(part_revision_id=part_revision_id).first()
-    if not process:
-        process = models.PartProcessDefinition(part_revision_id=part_revision_id)
-        db.add(process)
-        db.commit()
-        db.refresh(process)
-    if program_type == "laser":
-        process.laser_required = True
-        process.laser_program_path = program_path
-    elif program_type == "waterjet":
-        process.waterjet_required = True
-        process.waterjet_program_path = program_path
-    elif program_type == "robotic_weld":
-        process.robotic_weld_required = True
-        process.robotic_weld_program_path = program_path
-    else:
-        process.manual_weld_required = True
-        process.manual_weld_drawing_path = program_path
-    db.commit()
-    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": "Program path saved and revision data locked for production use.", "error": None})
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -369,29 +468,24 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
         raise HTTPException(404)
 
     form = await request.form()
-    item_id = form.get("id")
+    values = {k: form.get(k) for k in form.keys()}
+    item_id = values.get("id")
     item = db.query(model).filter_by(id=int(item_id)).first() if item_id else model()
     cols = [c for c in model.__table__.columns if c.name != "id"]
     field_meta = {c.name: build_field_meta(entity, c, db) for c in cols}
-    errors = {}
-    values = {}
 
-    for col in model.__table__.columns:
-        if col.name == "id":
-            continue
-        if col.name in form:
-            raw_val = form.get(col.name)
-            values[col.name] = raw_val
+    errors = {}
+    for col in cols:
+        if col.name in values:
+            raw = values.get(col.name)
             try:
-                parsed = parse_field_value(entity, col, raw_val)
-            except ValueError as exc:
+                parsed = parse_field_value(entity, col, raw)
+            except Exception as exc:
                 errors[col.name] = str(exc)
                 continue
-
             if parsed is None and field_meta[col.name]["required"]:
                 errors[col.name] = "This field is required"
                 continue
-
             setattr(item, col.name, parsed)
 
     if errors:
@@ -405,21 +499,16 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
     except IntegrityError as exc:
         db.rollback()
         details = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
-        friendly = "Could not save record because one or more fields have invalid or duplicate data."
-        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": f"{friendly} ({details})"}, "field_meta": field_meta, "form_values": values}, status_code=422)
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": f"Could not save record ({details})"}, "field_meta": field_meta, "form_values": values}, status_code=422)
     except SQLAlchemyError:
         db.rollback()
-        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving. Please review values and try again."}, "field_meta": field_meta, "form_values": values}, status_code=500)
+        return templates.TemplateResponse("entity_form.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "entity": entity, "cols": cols, "item": item if item_id else None, "errors": {"__all__": "Unexpected database error while saving."}, "field_meta": field_meta, "form_values": values}, status_code=500)
 
     if entity == "pallets":
         snapshot = {"status": item.status, "station": item.current_station_id, "at": datetime.utcnow().isoformat()}
-        rev = models.PalletRevision(pallet_id=item.id, revision_code=f"R{int(datetime.utcnow().timestamp())}", snapshot_json=json.dumps(snapshot), created_by=user.username)
-        db.add(rev)
+        db.add(models.PalletRevision(pallet_id=item.id, revision_code=f"R{int(datetime.utcnow().timestamp())}", snapshot_json=json.dumps(snapshot), created_by=user.username))
         db.commit()
         create_traveler_file(db, item.id)
-    if entity == "cut_sheet_revisions":
-        item.pdf_path = str(PDF_DIR / f"cut_sheet_{item.id}_{item.revision_code}.pdf")
-        db.commit()
     return RedirectResponse(f"/entity/{entity}", status_code=302)
 
 
@@ -442,55 +531,3 @@ def entity_delete(entity: str, item_id: int, db: Session = Depends(get_db), user
         db.delete(item)
         db.commit()
     return RedirectResponse(f"/entity/{entity}", status_code=302)
-
-
-@app.post("/pallets/{pallet_id}/split")
-async def split_pallet(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    source = db.query(models.Pallet).filter_by(id=pallet_id).first()
-    if not source:
-        raise HTTPException(404)
-    form = await request.form()
-    qty = float(form.get("quantity", 0))
-    child = models.Pallet(pallet_code=f"{source.pallet_code}-S{int(datetime.utcnow().timestamp())}", pallet_type="split", parent_pallet_id=source.id, status=source.status, created_by=user.username)
-    db.add(child)
-    db.commit()
-    parts = db.query(models.PalletPart).filter_by(pallet_id=source.id).all()
-    for p in parts:
-        moved = min(qty, p.actual_quantity)
-        p.actual_quantity -= moved
-        db.add(models.PalletPart(pallet_id=child.id, part_revision_id=p.part_revision_id, planned_quantity=moved, actual_quantity=moved))
-    db.commit()
-    create_traveler_file(db, child.id)
-    return RedirectResponse(f"/entity/pallets", status_code=302)
-
-
-@app.post("/pallets/combine")
-async def combine_pallets(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    form = await request.form()
-    target_id = int(form.get("target_id"))
-    source_id = int(form.get("source_id"))
-    target = db.query(models.Pallet).filter_by(id=target_id).first()
-    source = db.query(models.Pallet).filter_by(id=source_id).first()
-    if not target or not source:
-        raise HTTPException(404)
-    source_parts = db.query(models.PalletPart).filter_by(pallet_id=source.id).all()
-    for sp in source_parts:
-        tp = db.query(models.PalletPart).filter_by(pallet_id=target.id, part_revision_id=sp.part_revision_id).first()
-        if tp:
-            tp.actual_quantity += sp.actual_quantity
-        else:
-            db.add(models.PalletPart(pallet_id=target.id, part_revision_id=sp.part_revision_id, planned_quantity=sp.planned_quantity, actual_quantity=sp.actual_quantity))
-    source.status = "combined"
-    db.commit()
-    create_traveler_file(db, target.id)
-    return RedirectResponse("/entity/pallets", status_code=302)
-
-
-def create_traveler_file(db: Session, pallet_id: int):
-    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
-    parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).all()
-    lines = [f"Traveler - Pallet {pallet.pallet_code}", f"Status: {pallet.status}", f"Generated: {datetime.utcnow().isoformat()}", "", "Parts:"]
-    for p in parts:
-        lines.append(f"Part Revision {p.part_revision_id}: qty {p.actual_quantity}")
-    out = PDF_DIR / f"traveler_{pallet.pallet_code}.txt"
-    out.write_text("\n".join(lines))
