@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Stations</h2>
+<p>Select a station dashboard.</p>
+<div class="grid-list">
+  {% for station in stations %}
+    <a class="quick-pallet" href="/stations/{{station.id}}">
+      <strong>{{station.station_name}}</strong>
+      <span>Skill: {{station.skill_required or 'N/A'}}</span>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

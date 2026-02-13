@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,8 +22,10 @@ templates = Jinja2Templates(directory="app/templates")
 
 DRAWING_DIR = Path(os.getenv("DRAWING_DATA_PATH", "/data/drawings"))
 PDF_DIR = Path(os.getenv("PDF_DATA_PATH", "/data/pdfs"))
+REVISION_UPLOAD_DIR = Path(os.getenv("REVISION_UPLOAD_PATH", "/data/revision_files"))
 DRAWING_DIR.mkdir(parents=True, exist_ok=True)
 PDF_DIR.mkdir(parents=True, exist_ok=True)
+REVISION_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_MAP = {
     "parts": models.Part,
@@ -50,6 +52,9 @@ MODEL_MAP = {
     "skills": models.Skill,
     "employee_skills": models.EmployeeSkill,
     "users": models.User,
+    "part_revision_files": models.PartRevisionFile,
+    "engineering_questions": models.EngineeringQuestion,
+    "station_activities": models.StationActivity,
 }
 
 ROLE_WRITE = {
@@ -72,13 +77,14 @@ FIELD_CHOICES = {
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
     ("maintenance_requests", "status"): ["open", "in_progress", "closed"],
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
+    ("engineering_questions", "status"): ["open", "answered", "closed"],
 }
 
 TOP_NAV = [
     ("Dashboard", "/"),
     ("Production", "/production"),
-    ("Engineering", "/engineering/upload"),
-    ("Stations", "/entity/stations"),
+    ("Engineering", "/engineering"),
+    ("Stations", "/stations"),
     ("Inventory", "/entity/consumables"),
     ("Purchasing", "/entity/purchase_requests"),
     ("Maintenance", "/entity/maintenance_requests"),
@@ -87,10 +93,10 @@ TOP_NAV = [
 
 ENTITY_GROUPS = {
     "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
-    "Engineering": ["parts", "part_revisions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
+    "Engineering": ["parts", "part_revisions", "part_process_definitions", "part_revision_files", "engineering_questions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
     "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
     "Inventory": ["consumables", "consumable_usage_logs", "purchase_request_lines"],
-    "People": ["employees", "skills", "employee_skills", "users"],
+    "People": ["employees", "skills", "employee_skills", "users", "station_activities"],
 }
 
 
@@ -289,35 +295,257 @@ def production_create_pallet(part_revision_id: int = Form(...), quantity: float 
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
 
-@app.get("/engineering/upload", response_class=HTMLResponse)
-def engineering_upload_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": None, "error": None})
+ALLOWED_REVISION_FILE_TYPES = {
+    "laser": {".nc", ".dxf", ".txt", ".tap"},
+    "waterjet": {".nc", ".dxf", ".txt"},
+    "welder_module": {".mod", ".prg", ".txt", ".zip"},
+    "drawing": {".dwg", ".dxf", ".step", ".stp"},
+    "pdf": {".pdf"},
+}
 
 
-@app.post("/engineering/upload", response_class=HTMLResponse)
-def engineering_upload_save(request: Request, part_revision_id: int = Form(...), program_type: str = Form(...), program_path: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+def _save_revision_file(part_revision_id: int, upload: UploadFile) -> tuple[str, str]:
+    suffix = Path(upload.filename or "").suffix.lower()
+    out_dir = REVISION_UPLOAD_DIR / f"revision_{part_revision_id}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{int(datetime.utcnow().timestamp())}_{Path(upload.filename or 'file').name}"
+    target = out_dir / safe_name
+    with target.open("wb") as fh:
+        fh.write(upload.file.read())
+    return suffix, str(target)
+
+
+@app.get("/engineering", response_class=HTMLResponse)
+def engineering_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    parts_without_revision = (
+        db.query(models.Part)
+        .outerjoin(models.PartRevision, models.PartRevision.part_id == models.Part.id)
+        .filter(models.PartRevision.id.is_(None))
+        .order_by(models.Part.created_at.desc())
+        .all()
+    )
+    open_questions = db.query(models.EngineeringQuestion).filter_by(status="open").order_by(models.EngineeringQuestion.created_at.desc()).all()
+    recent_revisions = db.query(models.PartRevision).order_by(models.PartRevision.released_at.desc()).limit(20).all()
+    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "parts_without_revision": parts_without_revision, "open_questions": open_questions, "recent_revisions": recent_revisions})
+
+
+@app.get("/engineering/revision/{part_revision_id}", response_class=HTMLResponse)
+def engineering_revision_detail(part_revision_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login), message: str | None = None, error: str | None = None):
+    revision = db.query(models.PartRevision).filter_by(id=part_revision_id).first()
+    if not revision:
+        raise HTTPException(404)
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    files = db.query(models.PartRevisionFile).filter_by(part_revision_id=part_revision_id).order_by(models.PartRevisionFile.uploaded_at.desc()).all()
+    return templates.TemplateResponse("engineering_revision_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "revision": revision, "stations": stations, "files": files, "file_types": ALLOWED_REVISION_FILE_TYPES.keys(), "message": message, "error": error})
+
+
+@app.post("/engineering/revision/{part_revision_id}/upload", response_class=HTMLResponse)
+def engineering_upload_save(part_revision_id: int, request: Request, file_type: str = Form(...), available_station_ids: list[str] = Form([]), upload_file: UploadFile = File(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    if file_type not in ALLOWED_REVISION_FILE_TYPES:
+        return engineering_revision_detail(part_revision_id, request, db, user, error="Unknown file type selected.")
+    if not upload_file.filename:
+        return engineering_revision_detail(part_revision_id, request, db, user, error="Please choose a file to upload.")
+
+    suffix, saved_path = _save_revision_file(part_revision_id, upload_file)
+    if suffix not in ALLOWED_REVISION_FILE_TYPES[file_type]:
+        Path(saved_path).unlink(missing_ok=True)
+        allowed = ", ".join(sorted(ALLOWED_REVISION_FILE_TYPES[file_type]))
+        return engineering_revision_detail(part_revision_id, request, db, user, error=f"Invalid extension {suffix or '(none)'} for {file_type}. Allowed: {allowed}")
+
+    file_row = models.PartRevisionFile(
+        part_revision_id=part_revision_id,
+        file_type=file_type,
+        file_name=upload_file.filename,
+        file_path=saved_path,
+        station_ids_csv=",".join(available_station_ids),
+        uploaded_by=user.username,
+    )
+    db.add(file_row)
+
     process = db.query(models.PartProcessDefinition).filter_by(part_revision_id=part_revision_id).first()
     if not process:
         process = models.PartProcessDefinition(part_revision_id=part_revision_id)
         db.add(process)
-        db.commit()
-        db.refresh(process)
-    if program_type == "laser":
+
+    if file_type == "laser":
         process.laser_required = True
-        process.laser_program_path = program_path
-    elif program_type == "waterjet":
+        process.laser_program_path = saved_path
+    elif file_type == "waterjet":
         process.waterjet_required = True
-        process.waterjet_program_path = program_path
-    elif program_type == "robotic_weld":
+        process.waterjet_program_path = saved_path
+    elif file_type == "welder_module":
         process.robotic_weld_required = True
-        process.robotic_weld_program_path = program_path
-    else:
+        process.robotic_weld_program_path = saved_path
+    elif file_type == "drawing":
         process.manual_weld_required = True
-        process.manual_weld_drawing_path = program_path
+        process.manual_weld_drawing_path = saved_path
+
     db.commit()
-    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": "Program path saved and revision data locked for production use.", "error": None})
+    return engineering_revision_detail(part_revision_id, request, db, user, message="Revision file uploaded and availability saved.")
+
+
+@app.get("/engineering/upload", response_class=HTMLResponse)
+def engineering_upload_page_redirect():
+    return RedirectResponse("/engineering", status_code=302)
+
+
+@app.get("/engineering/machine-program", response_class=HTMLResponse)
+def engineering_machine_program_stub(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS})
+
+
+@app.get("/stations", response_class=HTMLResponse)
+def stations_home(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    return templates.TemplateResponse("stations_home.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "stations": stations})
+
+
+@app.get("/stations/{station_id}", response_class=HTMLResponse)
+def station_dashboard(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login), message: str | None = None):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+    queued = db.query(models.Queue).filter_by(station_id=station_id).order_by(models.Queue.queue_position.asc()).all()
+    next_queue = queued[0] if queued else None
+    pallets = db.query(models.Pallet).filter_by(current_station_id=station_id).order_by(models.Pallet.created_at.desc()).limit(10).all()
+    consumables = db.query(models.Consumable).order_by(models.Consumable.description.asc()).limit(100).all()
+    activities = db.query(models.StationActivity).filter_by(station_id=station_id).order_by(models.StationActivity.created_at.desc()).limit(20).all()
+    return templates.TemplateResponse("station_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station": station, "queued": queued, "next_queue": next_queue, "pallets": pallets, "consumables": consumables, "activities": activities, "message": message})
+
+
+def _station_activity(db: Session, station_id: int, activity_type: str, employee_code: str = "", notes: str = "", pallet_id: int | None = None):
+    db.add(models.StationActivity(station_id=station_id, activity_type=activity_type, employee_code=employee_code, notes=notes, pallet_id=pallet_id))
+
+
+@app.post("/stations/{station_id}/login")
+def station_login(station_id: int, employee_code: str = Form(...), password: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    _station_activity(db, station_id, "station_login", employee_code=employee_code, notes="Station login acknowledged")
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Operator+login+captured", status_code=302)
+
+
+@app.post("/stations/{station_id}/break")
+def station_break(station_id: int, employee_code: str = Form(...), notes: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    _station_activity(db, station_id, "break_start", employee_code=employee_code, notes=notes)
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Break+logged", status_code=302)
+
+
+@app.post("/stations/{station_id}/end-shift")
+def station_end_shift(station_id: int, employee_code: str = Form(...), notes: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    _station_activity(db, station_id, "end_shift", employee_code=employee_code, notes=notes)
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Shift+end+logged", status_code=302)
+
+
+@app.post("/stations/{station_id}/start-pallet")
+def station_start_pallet(station_id: int, pallet_code: str = Form(...), employee_code: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(pallet_code=pallet_code).first()
+    if not pallet:
+        raise HTTPException(404, "Pallet not found")
+    pallet.current_station_id = station_id
+    pallet.status = "in_progress"
+    _station_activity(db, station_id, "start_work", employee_code=employee_code, pallet_id=pallet.id, notes=f"Started work on {pallet_code}")
+    db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="start_work", quantity=0, recorded_by=user.username, notes=f"Operator {employee_code} started work"))
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Started+work+on+{pallet_code}", status_code=302)
+
+
+@app.post("/stations/{station_id}/stop-pallet")
+def station_stop_pallet(station_id: int, pallet_code: str = Form(...), work_completed: float = Form(0), scrap_qty: float = Form(0), split_qty: float = Form(0), combine_source_code: str = Form(""), employee_code: str = Form(""), notes: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(pallet_code=pallet_code).first()
+    if not pallet:
+        raise HTTPException(404, "Pallet not found")
+    db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="stop_work", quantity=work_completed, recorded_by=user.username, notes=f"Completed {work_completed}, scrap {scrap_qty}. {notes}"))
+    if scrap_qty > 0:
+        db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="scrapped", quantity=scrap_qty, recorded_by=user.username, notes="Scrap reported from station dashboard"))
+    if split_qty > 0:
+        child = models.Pallet(pallet_code=f"{pallet.pallet_code}-S{int(datetime.utcnow().timestamp())}", pallet_type="split", parent_pallet_id=pallet.id, status=pallet.status, current_station_id=station_id, created_by=user.username)
+        db.add(child)
+        db.flush()
+        db.add(models.PalletEvent(pallet_id=child.id, station_id=station_id, event_type="split", quantity=split_qty, recorded_by=user.username, notes=f"Split from {pallet.pallet_code}"))
+    if combine_source_code:
+        source = db.query(models.Pallet).filter_by(pallet_code=combine_source_code).first()
+        if source and source.id != pallet.id:
+            source.status = "combined"
+            db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="merged", quantity=0, recorded_by=user.username, notes=f"Merged source pallet {combine_source_code}"))
+    _station_activity(db, station_id, "stop_work", employee_code=employee_code, pallet_id=pallet.id, notes=notes or f"Stopped work on {pallet_code}")
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Stop+work+recorded+for+{pallet_code}", status_code=302)
+
+
+@app.post("/stations/{station_id}/maintenance")
+def station_report_maintenance(station_id: int, issue_description: str = Form(...), priority: str = Form("normal"), employee_code: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    db.add(models.MaintenanceRequest(station_id=station_id, requested_by=employee_code or user.username, priority=priority, status="open", issue_description=issue_description))
+    _station_activity(db, station_id, "maintenance_report", employee_code=employee_code, notes=issue_description)
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Maintenance+problem+reported", status_code=302)
+
+
+@app.post("/stations/{station_id}/engineering-issue")
+def station_report_engineering(station_id: int, question_text: str = Form(...), part_revision_id: int | None = Form(None), employee_code: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    db.add(models.EngineeringQuestion(station_id=station_id, part_revision_id=part_revision_id, question_text=question_text, asked_by=employee_code or user.username, status="open"))
+    _station_activity(db, station_id, "engineering_issue", employee_code=employee_code, notes=question_text)
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Engineering+issue+reported", status_code=302)
+
+
+@app.post("/stations/{station_id}/consumable-usage")
+def station_consumable_usage(station_id: int, consumable_id: int = Form(...), quantity_delta: float = Form(...), reason: str = Form(...), employee_code: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    db.add(models.ConsumableUsageLog(consumable_id=consumable_id, station_id=station_id, quantity_delta=quantity_delta, reason=reason))
+    _station_activity(db, station_id, "consumable_usage", employee_code=employee_code, notes=f"Consumable {consumable_id}: {quantity_delta}")
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Consumable+usage+logged", status_code=302)
+
+
+@app.post("/stations/{station_id}/consumable-reorder")
+def station_consumable_reorder(station_id: int, consumable_id: int = Form(...), quantity: float = Form(...), employee_code: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    pr = models.PurchaseRequest(requested_by=employee_code or user.username, status="open")
+    db.add(pr)
+    db.flush()
+    db.add(models.PurchaseRequestLine(purchase_request_id=pr.id, consumable_id=consumable_id, quantity=quantity))
+    _station_activity(db, station_id, "consumable_reorder", employee_code=employee_code, notes=f"PR {pr.id} consumable {consumable_id} qty {quantity}")
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}?message=Reorder+request+submitted", status_code=302)
+
+
+@app.get("/stations/{station_id}/manage-pallets", response_class=HTMLResponse)
+def station_manage_pallets(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+    pallets = db.query(models.Pallet).order_by(models.Pallet.created_at.desc()).limit(50).all()
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    return templates.TemplateResponse("station_manage_pallets.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station": station, "pallets": pallets, "stations": stations})
+
+
+@app.post("/stations/{station_id}/split-pallet")
+def station_split_pallet(station_id: int, pallet_id: int = Form(...), quantity: float = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    source = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not source:
+        raise HTTPException(404)
+    child = models.Pallet(pallet_code=f"{source.pallet_code}-S{int(datetime.utcnow().timestamp())}", pallet_type="split", parent_pallet_id=source.id, status=source.status, current_station_id=source.current_station_id, created_by=user.username)
+    db.add(child)
+    db.flush()
+    source_parts = db.query(models.PalletPart).filter_by(pallet_id=source.id).all()
+    for part in source_parts:
+        moved = min(quantity, part.actual_quantity)
+        part.actual_quantity -= moved
+        db.add(models.PalletPart(pallet_id=child.id, part_revision_id=part.part_revision_id, planned_quantity=moved, actual_quantity=moved, scrap_quantity=0))
+    db.add(models.PalletEvent(pallet_id=source.id, station_id=source.current_station_id, event_type="split", quantity=quantity, recorded_by=user.username, notes=f"Split to {child.pallet_code}"))
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}/manage-pallets", status_code=302)
+
+
+@app.post("/stations/{station_id}/update-location")
+def station_update_location(station_id: int, pallet_id: int = Form(...), new_station_id: int = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not pallet:
+        raise HTTPException(404)
+    pallet.current_station_id = new_station_id
+    db.add(models.PalletEvent(pallet_id=pallet.id, station_id=new_station_id, event_type="moved", quantity=0, recorded_by=user.username, notes=f"Location updated from station manage screen"))
+    db.commit()
+    return RedirectResponse(f"/stations/{station_id}/manage-pallets", status_code=302)
 
 
 @app.get("/login", response_class=HTMLResponse)

@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{station.station_name}} Dashboard</h2>
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+<div class="action-row"><a class="action-btn secondary" href="/stations/{{station.id}}/manage-pallets">Manage Pallets Page</a></div>
+
+<div class="cards">
+  <div class="card"><div class="label">Queued Pallets</div><div class="value">{{queued|length}}</div></div>
+  <div class="card"><div class="label">Current Pallets</div><div class="value">{{pallets|length}}</div></div>
+  <div class="card warning"><div class="label">Next in queue</div><div class="value" style="font-size:16px">{{next_queue.pallet_id if next_queue else 'None'}}</div></div>
+</div>
+
+<div class="station-sections">
+<form method="post" action="/stations/{{station.id}}/login" class="panel-form"><h3>Login screen</h3><input name="employee_code" placeholder="User ID" required/><input type="password" name="password" placeholder="Password" required/><button>Login</button></form>
+<form method="post" action="/stations/{{station.id}}/break" class="panel-form"><h3>Go on break</h3><input name="employee_code" placeholder="User ID" required/><input name="notes" placeholder="notes"/><button>Go on Break</button></form>
+<form method="post" action="/stations/{{station.id}}/end-shift" class="panel-form"><h3>End shift</h3><input name="employee_code" placeholder="User ID" required/><input name="notes" placeholder="notes"/><button>End Shift</button></form>
+<form method="post" action="/stations/{{station.id}}/start-pallet" class="panel-form"><h3>Start work on pallet</h3><input name="pallet_code" placeholder="Pallet number" required/><input name="employee_code" placeholder="User ID" required/><button>Start Work</button></form>
+<form method="post" action="/stations/{{station.id}}/stop-pallet" class="panel-form"><h3>Stop work on pallet</h3><input name="pallet_code" placeholder="Pallet number" required/><input name="employee_code" placeholder="User ID"/><input type="number" name="work_completed" step="0.01" placeholder="Work completed qty"/><input type="number" name="scrap_qty" step="0.01" placeholder="Scrap qty"/><input type="number" name="split_qty" step="0.01" placeholder="Split qty (optional)"/><input name="combine_source_code" placeholder="Combine source pallet (optional)"/><input name="notes" placeholder="Completion notes"/><button>Stop Work + Log</button></form>
+<form method="post" action="/stations/{{station.id}}/maintenance" class="panel-form"><h3>Report maintenance problem</h3><input name="employee_code" placeholder="User ID"/><select name="priority"><option>low</option><option selected>normal</option><option>high</option><option>urgent</option></select><textarea name="issue_description" placeholder="Maintenance issue" required></textarea><button>Report Maintenance</button></form>
+<form method="post" action="/stations/{{station.id}}/engineering-issue" class="panel-form"><h3>Report engineering issue</h3><input name="employee_code" placeholder="User ID"/><input name="part_revision_id" type="number" placeholder="Part revision ID (optional)"/><textarea name="question_text" placeholder="Engineering question" required></textarea><button>Report Engineering Issue</button></form>
+<form method="post" action="/stations/{{station.id}}/consumable-usage" class="panel-form"><h3>Log consumable usage</h3><input name="employee_code" placeholder="User ID"/><select name="consumable_id">{% for c in consumables %}<option value="{{c.id}}">{{c.description}}</option>{% endfor %}</select><input type="number" step="0.01" name="quantity_delta" placeholder="Quantity delta (- for use)" required/><input name="reason" placeholder="Reason" required/><button>Log Usage</button></form>
+<form method="post" action="/stations/{{station.id}}/consumable-reorder" class="panel-form"><h3>Request reorder of consumable</h3><input name="employee_code" placeholder="User ID"/><select name="consumable_id">{% for c in consumables %}<option value="{{c.id}}">{{c.description}}</option>{% endfor %}</select><input type="number" step="0.01" name="quantity" placeholder="Requested qty" required/><button>Request Reorder</button></form>
+</div>
+
+<h3>Recent station activity</h3>
+<ul>
+{% for a in activities %}<li>{{a.created_at}} — {{a.activity_type}} — {{a.employee_code}} {{a.notes}}</li>{% else %}<li>No station activity logged yet.</li>{% endfor %}
+</ul>
+{% endblock %}

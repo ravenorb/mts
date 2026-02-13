@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Engineering Dashboard</h2>
+<div class="action-row">
+  <a class="action-btn" href="/entity/parts/new">Create Part</a>
+  <a class="action-btn" href="/entity/part_revisions/new">Create Revision</a>
+  <a class="action-btn secondary" href="/entity/part_revisions">Edit Revision</a>
+  <a class="action-btn secondary" href="/entity/part_revisions">View Part Revision</a>
+  <a class="action-btn secondary" href="/engineering/machine-program">Add Machine Program File</a>
+</div>
+
+<h3>Queue: Parts with no revision yet</h3>
+<ul>
+  {% for part in parts_without_revision %}
+    <li>{{part.part_number}} — {{part.description}} <a href="/entity/part_revisions/new">Create revision</a></li>
+  {% else %}
+    <li>No parts waiting for first revision.</li>
+  {% endfor %}
+</ul>
+
+<h3>Queue: Open station engineering questions</h3>
+<ul>
+  {% for q in open_questions %}
+    <li>Station {{q.station_id}}{% if q.part_revision_id %}, Revision {{q.part_revision_id}}{% endif %}: {{q.question_text}}</li>
+  {% else %}
+    <li>No open engineering questions.</li>
+  {% endfor %}
+</ul>
+
+<h3>Part Revisions (upload files)</h3>
+<div class="grid-list">
+  {% for rev in recent_revisions %}
+    <a class="quick-pallet" href="/engineering/revision/{{rev.id}}">
+      <strong>Revision {{rev.revision_code}}</strong>
+      <span>Part ID {{rev.part_id}}</span>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

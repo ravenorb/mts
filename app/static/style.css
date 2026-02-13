@@ -38,3 +38,6 @@ th,td{border:1px solid #ccc;padding:6px;font-size:12px;vertical-align:top}
   .side-nav{position:static;width:auto;border-right:none;top:auto}
   .main-content{margin-left:0}
 }
+.checkbox-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;padding:8px;border:1px solid #ddd;border-radius:6px;background:#f9fafb}
+.station-sections{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;align-items:start}
+textarea{min-height:72px;padding:9px;border:1px solid #bbb;border-radius:4px;background:#fff}

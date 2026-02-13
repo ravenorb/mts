@@ -193,6 +193,40 @@ class PalletEvent(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
 
 
+
+
+class PartRevisionFile(Base):
+    __tablename__ = "part_revision_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_revision_id: Mapped[int] = mapped_column(ForeignKey("part_revisions.id"))
+    file_type: Mapped[str] = mapped_column(String(40))
+    file_name: Mapped[str] = mapped_column(String(255))
+    file_path: Mapped[str] = mapped_column(Text)
+    station_ids_csv: Mapped[str] = mapped_column(Text, default="")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    uploaded_by: Mapped[str] = mapped_column(String(80), default="system")
+
+
+class EngineeringQuestion(Base):
+    __tablename__ = "engineering_questions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    part_revision_id: Mapped[int | None] = mapped_column(ForeignKey("part_revisions.id"), nullable=True)
+    question_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    asked_by: Mapped[str] = mapped_column(String(80), default="operator")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class StationActivity(Base):
+    __tablename__ = "station_activities"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    activity_type: Mapped[str] = mapped_column(String(40))
+    employee_code: Mapped[str] = mapped_column(String(80), default="")
+    pallet_id: Mapped[int | None] = mapped_column(ForeignKey("pallets.id"), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 class StationMaintenanceTask(Base):
     __tablename__ = "station_maintenance_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)

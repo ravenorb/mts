@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Manage Pallets — {{station.station_name}}</h2>
+<div class="action-row"><a class="action-btn secondary" href="/stations/{{station.id}}">Back to Station Dashboard</a></div>
+<form method="post" action="/pallets/combine" class="panel-form">
+  <h3>Combine pallets</h3>
+  <input name="target_id" type="number" placeholder="Target pallet ID" required />
+  <input name="source_id" type="number" placeholder="Source pallet ID" required />
+  <button>Combine</button>
+</form>
+<form method="post" action="/stations/{{station.id}}/split-pallet" class="panel-form">
+  <h3>Split pallet</h3>
+  <select name="pallet_id">{% for p in pallets %}<option value="{{p.id}}">{{p.id}} - {{p.pallet_code}}</option>{% endfor %}</select>
+  <input name="quantity" type="number" step="0.01" placeholder="Quantity to split" required />
+  <button>Split Pallet</button>
+</form>
+<form method="post" action="/stations/{{station.id}}/update-location" class="panel-form">
+  <h3>Update pallet location</h3>
+  <select name="pallet_id">{% for p in pallets %}<option value="{{p.id}}">{{p.id}} - {{p.pallet_code}}</option>{% endfor %}</select>
+  <select name="new_station_id">{% for st in stations %}<option value="{{st.id}}">{{st.station_name}}</option>{% endfor %}</select>
+  <button>Update Location</button>
+</form>
+
+<h3>Show next pallet in queue</h3>
+<table><tr><th>ID</th><th>Pallet</th><th>Status</th><th>Current Station</th></tr>
+{% for p in pallets %}<tr><td>{{p.id}}</td><td>{{p.pallet_code}}</td><td>{{p.status}}</td><td>{{p.current_station_id}}</td></tr>{% endfor %}
+</table>
+{% endblock %}

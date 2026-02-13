@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Revision {{revision.revision_code}} (Part {{revision.part_id}})</h2>
+<p>Upload revision-specific files and check station availability.</p>
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+{% if error %}<div class="form-error-banner">{{error}}</div>{% endif %}
+<form method="post" action="/engineering/revision/{{revision.id}}/upload" enctype="multipart/form-data" class="panel-form">
+  <label>File type</label>
+  <select name="file_type" required>
+    {% for t in file_types %}<option value="{{t}}">{{t.replace('_',' ').title()}}</option>{% endfor %}
+  </select>
+  <label>Upload file</label>
+  <input type="file" name="upload_file" required />
+  <label>Make available to station(s)</label>
+  <div class="checkbox-grid">
+    {% for st in stations %}
+      <label><input type="checkbox" name="available_station_ids" value="{{st.id}}" /> {{st.station_name}}</label>
+    {% endfor %}
+  </div>
+  <button type="submit">Upload Revision File</button>
+</form>
+
+<h3>Uploaded Files</h3>
+<table>
+  <tr><th>Type</th><th>File</th><th>Path</th><th>Stations</th><th>By</th><th>At</th></tr>
+  {% for f in files %}
+    <tr>
+      <td>{{f.file_type}}</td>
+      <td>{{f.file_name}}</td>
+      <td>{{f.file_path}}</td>
+      <td>{{f.station_ids_csv or 'All / not set'}}</td>
+      <td>{{f.uploaded_by}}</td>
+      <td>{{f.uploaded_at}}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6">No files uploaded for this revision yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
