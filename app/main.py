@@ -304,6 +304,23 @@ def create_default_admin(db: Session):
         db.commit()
 
 
+def ensure_default_stations(db: Session) -> list[models.Station]:
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    if stations:
+        return stations
+    db.add_all([
+        models.Station(station_name="station1", skill_required=""),
+        models.Station(station_name="station2", skill_required=""),
+    ])
+    db.commit()
+    return db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+
+
+def station_nav_context(db: Session) -> dict:
+    stations = ensure_default_stations(db)
+    return {"stations_nav": [{"id": s.id, "name": s.station_name} for s in stations]}
+
+
 def get_current_user(request: Request, db: Session):
     uid = request.session.get("uid")
     if not uid:
@@ -333,6 +350,7 @@ def startup():
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
     create_default_admin(db)
+    ensure_default_stations(db)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -475,20 +493,114 @@ def engineering_machine_program_stub(request: Request, db: Session = Depends(get
 
 @app.get("/stations", response_class=HTMLResponse)
 def stations_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
-    queue = db.query(models.Queue).filter(models.Queue.status.in_(["queued", "in_progress"])).order_by(models.Queue.queue_position.asc()).limit(30).all()
-    return templates.TemplateResponse("stations_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "stations": stations, "queue": queue})
+    stations = ensure_default_stations(db)
+    start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    station_cards: list[dict] = []
+    for station in stations:
+        queue_length = db.query(models.Queue).filter(
+            models.Queue.station_id == station.id,
+            models.Queue.status.in_(["queued", "in_progress"]),
+        ).count()
+        current_pallet = db.query(models.Pallet).filter_by(current_station_id=station.id, status="in_progress").order_by(models.Pallet.id.desc()).first()
+        parts_processed = db.query(func.count(models.PalletEvent.id)).filter(
+            models.PalletEvent.station_id == station.id,
+            models.PalletEvent.event_type.in_(["completed", "save_work"]),
+            models.PalletEvent.recorded_at >= start_of_day,
+        ).scalar() or 0
+        hours_operated = db.query(func.sum(models.PalletEvent.quantity)).filter(
+            models.PalletEvent.station_id == station.id,
+            models.PalletEvent.event_type == "hours_operated",
+            models.PalletEvent.recorded_at >= start_of_day,
+        ).scalar() or 0
+        station_cards.append({
+            "id": station.id,
+            "name": station.station_name,
+            "current_pallet": current_pallet.pallet_code if current_pallet else "None",
+            "queue_length": queue_length,
+            "hours_operated": round(float(hours_operated), 2),
+            "parts_processed": int(parts_processed),
+        })
+    return templates.TemplateResponse("stations_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station_cards": station_cards, **station_nav_context(db)})
+
+
+@app.get("/stations/{station_id}", response_class=HTMLResponse)
+def station_page(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+    if not request.session.get(f"station_auth_{station_id}"):
+        return RedirectResponse(f"/stations/{station_id}/login", status_code=302)
+
+    queue_rows = db.query(models.Queue).filter_by(station_id=station_id).order_by(models.Queue.queue_position.asc()).limit(5).all()
+    queue = [{"id": q.id, "position": q.queue_position, "status": q.status, "pallet": db.query(models.Pallet).filter_by(id=q.pallet_id).first()} for q in queue_rows]
+    active_pallet = db.query(models.Pallet).filter_by(current_station_id=station_id, status="in_progress").order_by(models.Pallet.id.desc()).first()
+    pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=active_pallet.id).all() if active_pallet else []
+    station_files = db.query(models.PartRevisionFile).order_by(models.PartRevisionFile.uploaded_at.desc()).all()
+    station_documents = [f for f in station_files if str(station_id) in {v.strip() for v in (f.station_ids_csv or "").split(",") if v.strip()}][:10]
+    selected_doc_id = request.query_params.get("doc")
+    selected_doc = next((f for f in station_documents if str(f.id) == selected_doc_id), station_documents[0] if station_documents else None)
+
+    return templates.TemplateResponse("station_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station": station, "queue": queue, "active_pallet": active_pallet, "pallet_parts": pallet_parts, "station_documents": station_documents, "selected_doc": selected_doc, **station_nav_context(db)})
 
 
 @app.get("/stations/login", response_class=HTMLResponse)
-def stations_login(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    return templates.TemplateResponse("station_login.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "error": None, "ok": None})
+def stations_login(db: Session = Depends(get_db), user=Depends(require_login)):
+    station = ensure_default_stations(db)[0]
+    return RedirectResponse(f"/stations/{station.id}/login", status_code=302)
 
 
-@app.post("/stations/login", response_class=HTMLResponse)
-def stations_login_submit(request: Request, station_user_id: str = Form(...), station_password: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
-    ok = bool(station_user_id.strip()) and bool(station_password.strip())
-    return templates.TemplateResponse("station_login.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "error": None if ok else "Missing credentials", "ok": "Station login accepted (stub)." if ok else None})
+@app.get("/stations/{station_id}/login", response_class=HTMLResponse)
+def station_login(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+    return templates.TemplateResponse("station_login.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station": station, "error": None, "ok": None, **station_nav_context(db)})
+
+
+@app.post("/stations/{station_id}/login", response_class=HTMLResponse)
+def stations_login_submit(station_id: int, request: Request, station_user_id: str = Form(...), station_password: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+    account = db.query(models.User).filter_by(username=station_user_id.strip(), active=True).first()
+    if account and verify_password(station_password, account.password_hash):
+        request.session[f"station_auth_{station_id}"] = station_user_id.strip()
+        return RedirectResponse(f"/stations/{station_id}", status_code=302)
+    return templates.TemplateResponse("station_login.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "station": station, "error": "Invalid station credentials", "ok": None, **station_nav_context(db)})
+
+
+@app.post("/stations/{station_id}/start-next")
+def station_start_next(station_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    next_queue = db.query(models.Queue).filter_by(station_id=station_id, status="queued").order_by(models.Queue.queue_position.asc()).first()
+    if next_queue:
+        next_queue.status = "in_progress"
+        pallet = db.query(models.Pallet).filter_by(id=next_queue.pallet_id).first()
+        if pallet:
+            pallet.status = "in_progress"
+            pallet.current_station_id = station_id
+            db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="started", quantity=0, recorded_by=user.username, notes="Started next queued pallet"))
+        db.commit()
+    return RedirectResponse(f"/stations/{station_id}", status_code=302)
+
+
+@app.post("/stations/{station_id}/save-work")
+def station_save_work(station_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(current_station_id=station_id, status="in_progress").order_by(models.Pallet.id.desc()).first()
+    if pallet:
+        db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="save_work", quantity=0, recorded_by=user.username, notes="Saved pallet work"))
+        db.commit()
+    return RedirectResponse(f"/stations/{station_id}", status_code=302)
+
+
+@app.post("/stations/{station_id}/queue-reorder")
+async def station_queue_reorder(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    payload = await request.json()
+    for idx, queue_id in enumerate(payload.get("order", []), start=1):
+        row = db.query(models.Queue).filter_by(id=int(queue_id), station_id=station_id).first()
+        if row:
+            row.queue_position = idx
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/stations/report-engineering-issue")
