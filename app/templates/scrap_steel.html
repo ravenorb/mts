@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Scrap Steel</h2>
+<form method="post" action="/inventory/scrap-steel/add" class="panel-form">
+  <h3>Add Scrap Row</h3>
+  <input name="pallet_id" placeholder="Pallet ID" />
+  <input name="storage_id" placeholder="Storage ID" />
+  <input name="weight" placeholder="Weight" />
+  <select name="location_id"><option value="">Location</option>{% for l in locations %}<option value="{{l.id}}">{{l.id}}</option>{% endfor %}</select>
+  <input name="scrap_type" placeholder="Scrap type" />
+  <button>Add</button>
+</form>
+
+<table>
+  <tr><th>Pallet ID</th><th>Storage ID</th><th>Weight</th><th>Location ID</th><th>Scrap Type</th><th>Delivered</th><th>Actions</th></tr>
+  {% for r in rows %}
+  <tr><form method="post" action="/inventory/scrap-steel/{{r.id}}/edit">
+    <td><input name="pallet_id" value="{{r.pallet_id}}" /></td>
+    <td><input name="storage_id" value="{{r.storage_id}}" /></td>
+    <td><input name="weight" value="{{r.weight}}" /></td>
+    <td><select name="location_id"><option value="">-</option>{% for l in locations %}<option value="{{l.id}}" {% if r.location_id==l.id %}selected{% endif %}>{{l.id}}</option>{% endfor %}</select></td>
+    <td><input name="scrap_type" value="{{r.scrap_type}}" /></td>
+    <td>{{'Y' if r.delivered else 'N'}}</td>
+    <td><button>Modify</button></form><form method="post" action="/inventory/scrap-steel/{{r.id}}/deliver" style="display:inline"><button>Mark Delivered</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

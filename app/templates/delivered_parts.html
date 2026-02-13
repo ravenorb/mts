@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Delivered Parts</h2>
+<table>
+  <tr><th>Frame Part #</th><th>Qty Completed In Lot</th><th>Serial # Begin</th><th>Date/Time of Completion</th><th>Recorded By</th></tr>
+  {% for r in rows %}
+  <tr><td>{{r.frame_part_number}}</td><td>{{r.qty_completed_in_lot}}</td><td>{{r.serial_begin}}</td><td>{{r.completed_at}}</td><td>{{r.recorded_by}}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}
