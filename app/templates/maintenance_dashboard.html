@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Maintenance Dashboard</h2>
+
+<h3>Maintenance Requests</h3>
+<table>
+  <tr>
+    <th>ID</th><th>Date of Request</th><th>Station ID</th><th>User ID</th><th>Description</th><th>Date & Time</th><th>Status</th>
+  </tr>
+  {% for r in open_requests %}
+  <tr>
+    <td><a href="/maintenance/{{r.id}}">{{r.id}}</a></td>
+    <td>{{r.created_at.date()}}</td>
+    <td>{{r.station_id}}</td>
+    <td>{{r.requested_user_id or 'N/A'}}</td>
+    <td>{{r.issue_description}}</td>
+    <td>{{r.created_at}}</td>
+    <td>{{r.status}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Upcoming Scheduled Maintenance (next 14 days)</h3>
+<table>
+  <tr>
+    <th>ID</th><th>Due Date</th><th>Station ID</th><th>User ID</th><th>Description</th><th>Date & Time</th><th>Status</th>
+  </tr>
+  {% for r in upcoming %}
+  <tr>
+    <td><a href="/maintenance/{{r.id}}">{{r.id}}</a></td>
+    <td>{{(r.scheduled_for or r.created_at).date()}}</td>
+    <td>{{r.station_id}}</td>
+    <td>{{r.requested_user_id or 'system'}}</td>
+    <td>{{r.issue_description}}</td>
+    <td>{{r.scheduled_for or r.created_at}}</td>
+    <td>{{r.status}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Station Quick Access</h3>
+<div class="action-row">
+  {% for st in stations %}
+    <a class="action-btn secondary" href="/admin/stations/{{st.id}}/view">{{st.station_name}}</a>
+  {% endfor %}
+</div>
+{% endblock %}

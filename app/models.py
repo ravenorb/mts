@@ -230,17 +230,35 @@ class StationMaintenanceTask(Base):
     frequency_hours: Mapped[float] = mapped_column(Float)
     responsible_role: Mapped[str] = mapped_column(String(80), default="maintenance")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class MaintenanceRequest(Base):
     __tablename__ = "maintenance_requests"
     id: Mapped[int] = mapped_column(primary_key=True)
     station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    maintenance_task_id: Mapped[int | None] = mapped_column(ForeignKey("station_maintenance_tasks.id"), nullable=True)
     requested_by: Mapped[str] = mapped_column(String(80))
+    requested_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     priority: Mapped[str] = mapped_column(String(20), default="normal")
-    status: Mapped[str] = mapped_column(String(20), default="open")
+    status: Mapped[str] = mapped_column(String(30), default="submitted")
     issue_description: Mapped[str] = mapped_column(Text)
+    work_comments: Mapped[str] = mapped_column(Text, default="")
+    request_type: Mapped[str] = mapped_column(String(20), default="request")
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class MaintenanceLog(Base):
+    __tablename__ = "maintenance_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    maintenance_request_id: Mapped[int] = mapped_column(ForeignKey("maintenance_requests.id"))
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    closed_by: Mapped[str] = mapped_column(String(80), default="system")
+    closure_notes: Mapped[str] = mapped_column(Text, default="")
+    closed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Consumable(Base):

@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -54,6 +54,7 @@ MODEL_MAP = {
     "pallet_events": models.PalletEvent,
     "maintenance_requests": models.MaintenanceRequest,
     "station_maintenance_tasks": models.StationMaintenanceTask,
+    "maintenance_logs": models.MaintenanceLog,
     "consumables": models.Consumable,
     "purchase_requests": models.PurchaseRequest,
     "purchase_request_lines": models.PurchaseRequestLine,
@@ -90,7 +91,7 @@ FIELD_CHOICES = {
     ("pallets", "pallet_type"): ["manual", "split", "mixed"],
     ("queues", "status"): ["queued", "in_progress", "blocked", "done"],
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
-    ("maintenance_requests", "status"): ["open", "in_progress", "closed"],
+    ("maintenance_requests", "status"): ["submitted", "reviewed", "scheduled", "waiting on parts", "complete"],
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
     ("engineering_questions", "status"): ["open", "answered", "closed"],
 }
@@ -102,7 +103,7 @@ TOP_NAV = [
     ("Stations", "/stations"),
     ("Inventory", "/inventory"),
     ("Purchasing", "/entity/purchase_requests"),
-    ("Maintenance", "/entity/maintenance_requests"),
+    ("Maintenance", "/maintenance"),
     ("Admin", "/admin"),
 ]
 
@@ -113,6 +114,48 @@ ENTITY_GROUPS = {
     "Inventory": ["storage_locations", "raw_materials", "consumables", "parts", "delivered_part_lots", "scrap_steel"],
     "People": ["employees", "skills", "employee_skills", "users"],
 }
+
+MAINTENANCE_ACTIVE_STATUSES = ["submitted", "reviewed", "scheduled", "waiting on parts"]
+LEGACY_MAINTENANCE_STATUS_MAP = {
+    "open": "submitted",
+    "in_progress": "reviewed",
+    "closed": "complete",
+}
+
+
+def ensure_upcoming_scheduled_requests(db: Session):
+    now = datetime.utcnow()
+    due_by = now + timedelta(days=14)
+    tasks = db.query(models.StationMaintenanceTask).filter_by(active=True).all()
+    for task in tasks:
+        if task.next_due_at is None:
+            task.next_due_at = now + timedelta(hours=task.frequency_hours)
+        if task.next_due_at > due_by:
+            continue
+        existing = db.query(models.MaintenanceRequest).filter(
+            models.MaintenanceRequest.maintenance_task_id == task.id,
+            models.MaintenanceRequest.request_type == "scheduled",
+            models.MaintenanceRequest.status != "complete",
+        ).first()
+        if existing:
+            continue
+        db.add(models.MaintenanceRequest(
+            station_id=task.station_id,
+            maintenance_task_id=task.id,
+            requested_by="system",
+            priority="normal",
+            status="scheduled",
+            issue_description=task.task_description,
+            request_type="scheduled",
+            scheduled_for=task.next_due_at,
+        ))
+    db.commit()
+
+
+def normalize_maintenance_status(item: models.MaintenanceRequest):
+    mapped = LEGACY_MAINTENANCE_STATUS_MAP.get(item.status)
+    if mapped:
+        item.status = mapped
 
 
 def fk_choices(col, db: Session):
@@ -252,7 +295,7 @@ def root(request: Request, db: Session = Depends(get_db)):
     active = db.query(models.Pallet).filter(models.Pallet.status != "complete").count()
     hold = db.query(models.Pallet).filter(models.Pallet.status == "hold").count()
     bottlenecks = db.query(models.Queue.station_id, func.count(models.Queue.id)).group_by(models.Queue.station_id).all()
-    maintenance_open = db.query(models.MaintenanceRequest).filter_by(status="open").count()
+    maintenance_open = db.query(models.MaintenanceRequest).filter(models.MaintenanceRequest.status != "complete").count()
     low_stock = db.query(models.Consumable).filter(models.Consumable.qty_on_hand <= models.Consumable.reorder_point).count()
     staged = db.query(models.Pallet).filter(models.Pallet.status == "staged").count()
     in_progress = db.query(models.Pallet).filter(models.Pallet.status == "in_progress").count()
@@ -807,6 +850,14 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
         create_traveler_file(db, item.id)
     if entity == "cut_sheet_revisions":
         item.pdf_path = str(PDF_DIR / f"cut_sheet_{item.id}_{item.revision_code}.pdf")
+        db.commit()
+    if entity == "maintenance_requests":
+        if not item.requested_by:
+            item.requested_by = user.username
+        if not item.requested_user_id:
+            item.requested_user_id = user.id
+        if not item.status:
+            item.status = "submitted"
         db.commit()
     return RedirectResponse(f"/entity/{entity}", status_code=302)
 
