@@ -1,15 +1,19 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>{{active_tab_title}}</h2>
-
-{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
 
 {% if active_tab in ['users','stations','skills','employees'] %}
   {% set entity = active_tab %}
   <div class="page-toolbar">
-    <div></div>
+    <h2>{{active_tab_title}}</h2>
     <a href="/entity/{{entity}}/new" class="action-btn">Add New</a>
   </div>
+{% else %}
+  <h2>{{active_tab_title}}</h2>
+{% endif %}
+
+{% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
+
+{% if active_tab in ['users','stations','skills','employees'] %}
   <table>
     <tr>
       {% for c in admin_cols[entity] %}<th>{{c}}</th>{% endfor %}
