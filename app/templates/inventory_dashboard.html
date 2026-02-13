@@ -1,20 +1,71 @@
 {% extends 'base.html' %}
 {% block content %}
-<h3>Consumables by Station</h3>
-{% for station in stations %}
-  <h4>{{station.station_name}} (Station {{station.id}})</h4>
-  <table>
-    <tr><th>Qty On Hand</th><th>Description</th><th>Reorder Qty</th><th>Actions</th></tr>
-    {% for item in grouped_consumables.get(station.id, []) %}
-      <tr>
-        <td>{{item.qty_on_hand}}</td>
-        <td>{{item.description}}</td>
-        <td>{{item.reorder_point}}</td>
-        <td><a class="action-btn" href="/inventory/consumables/{{item.id}}">Edit / View</a></td>
-      </tr>
-    {% else %}
-      <tr><td colspan="4">No consumables assigned to this station.</td></tr>
-    {% endfor %}
-  </table>
-{% endfor %}
+<h2>Inventory Dashboard</h2>
+
+<h3>Low Stock (Below Reorder Qty)</h3>
+<table>
+  <tr><th>Type</th><th>ID</th><th>Description</th><th>Qty On Hand</th><th>Reorder Qty</th><th>Qty On Order</th><th>Qty On Request</th><th>Actions</th></tr>
+  {% for row in low_stock_rows %}
+  <tr>
+    <td>{{row.item_type}}</td>
+    <td>{{row.id}}</td>
+    <td>{{row.description}}</td>
+    <td>{{row.qty_on_hand}}</td>
+    <td>{{row.reorder_qty}}</td>
+    <td>{{row.qty_on_order}}</td>
+    <td>{{row.qty_on_request}}</td>
+    <td>
+      {% if row.item_type == 'Consumable' %}
+      <a href="/inventory/consumables/{{row.id}}">View / Edit</a>
+      {% else %}
+      <a href="/inventory/raw-materials">View Raw Materials</a>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="8">No inventory items currently below reorder quantity.</td></tr>
+  {% endfor %}
+</table>
+
+<h3>Open Purchase Requests</h3>
+<table>
+  <tr><th>Request ID</th><th>Requested At</th><th>Requested By</th><th>Status</th><th>Line Count</th><th>Total Requested Qty</th><th>Actions</th></tr>
+  {% for req in open_purchase_requests %}
+  <tr>
+    <td>{{req.id}}</td>
+    <td>{{req.requested_at}}</td>
+    <td>{{req.requested_by}}</td>
+    <td>{{req.status}}</td>
+    <td>{{req.line_count}}</td>
+    <td>{{req.total_requested_qty}}</td>
+    <td><a href="/entity/purchase_requests/{{req.id}}/edit">View / Edit</a></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7">No open purchase requests.</td></tr>
+  {% endfor %}
+</table>
+
+<h3>Items Currently On Order</h3>
+<table>
+  <tr><th>Type</th><th>ID</th><th>Description</th><th>Qty On Hand</th><th>Qty On Order</th><th>Qty On Request</th><th>Actions</th></tr>
+  {% for row in on_order_rows %}
+  <tr>
+    <td>{{row.item_type}}</td>
+    <td>{{row.id}}</td>
+    <td>{{row.description}}</td>
+    <td>{{row.qty_on_hand}}</td>
+    <td>{{row.qty_on_order}}</td>
+    <td>{{row.qty_on_request}}</td>
+    <td>
+      {% if row.item_type == 'Consumable' %}
+      <a href="/inventory/consumables/{{row.id}}">View / Edit</a>
+      {% else %}
+      <a href="/inventory/raw-materials">View Raw Materials</a>
+      {% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7">No consumables or raw materials currently on order.</td></tr>
+  {% endfor %}
+</table>
 {% endblock %}

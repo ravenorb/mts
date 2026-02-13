@@ -31,6 +31,21 @@
     {% endfor %}
   </nav>
   {% endif %}
+  {% if request.url.path.startswith('/admin') %}
+  <nav class="section-nav" aria-label="Admin sections">
+    {% set admin_sections = [
+      ('Users', '/admin?tab=users', 'users'),
+      ('Stations', '/admin?tab=stations', 'stations'),
+      ('Skills', '/admin?tab=skills', 'skills'),
+      ('Employees', '/admin?tab=employees', 'employees'),
+      ('Server Maintenance', '/admin?tab=server-maintenance', 'server-maintenance')
+    ] %}
+    {% set active_admin_tab = request.query_params.get('tab', 'users') %}
+    {% for label, href, tab_key in admin_sections %}
+      <a class="{% if active_admin_tab == tab_key %}active{% endif %}" href="{{href}}">{{label}}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
   {% endif %}
 </header>
 {% if user and entity_groups %}
