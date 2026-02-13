@@ -1,15 +1,5 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Inventory Dashboard</h2>
-<div class="action-row">
-  <a class="action-btn" href="/inventory/locations">Storage Locations</a>
-  <a class="action-btn" href="/inventory/raw-materials">Raw Materials</a>
-  <a class="action-btn" href="/inventory/consumables">Consumables</a>
-  <a class="action-btn" href="/inventory/parts">Parts</a>
-  <a class="action-btn" href="/inventory/delivered-parts">Delivered Parts</a>
-  <a class="action-btn" href="/inventory/scrap-steel">Scrap Steel</a>
-</div>
-
 <h3>Consumables by Station</h3>
 {% for station in stations %}
   <h4>{{station.station_name}} (Station {{station.id}})</h4>
