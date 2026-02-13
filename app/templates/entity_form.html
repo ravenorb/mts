@@ -3,10 +3,31 @@
 <h2>{{ 'Edit' if item else 'New' }} {{entity}}</h2>
 <form method="post" action="/entity/{{entity}}/save">
   {% if item %}<input type="hidden" name="id" value="{{item.id}}" />{% endif %}
+  {% if errors.get('__all__') %}
+    <div class="form-error-banner">{{ errors.get('__all__') }}</div>
+  {% endif %}
   {% for c in cols %}
-    <div>
-      <label>{{c.name}}</label>
-      <input name="{{c.name}}" value="{{ item|attr(c.name) if item else '' }}" />
+    {% set meta = field_meta.get(c.name, {}) %}
+    {% set posted = form_values.get(c.name) if form_values else none %}
+    {% set current_val = posted if posted is not none else (item|attr(c.name) if item else '') %}
+    <div class="form-field">
+      <label>{{c.name}}{% if meta.required %} *{% endif %}</label>
+
+      {% if meta.choices %}
+        <select name="{{c.name}}">
+          <option value="">-- select --</option>
+          {% for opt in meta.choices %}
+            <option value="{{opt}}" {% if current_val|string == opt|string %}selected{% endif %}>{{opt}}</option>
+          {% endfor %}
+        </select>
+      {% else %}
+        <input name="{{c.name}}" value="{{ current_val }}" />
+      {% endif %}
+
+      <div class="field-help">Expected: {{ meta.expected }}</div>
+      {% if errors.get(c.name) %}
+        <div class="field-error">{{ errors.get(c.name) }}</div>
+      {% endif %}
     </div>
   {% endfor %}
   <button type="submit">Save</button>
