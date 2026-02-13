@@ -601,12 +601,79 @@ def ensure_storage_bins(db: Session, location: models.StorageLocation):
 
 @app.get("/inventory", response_class=HTMLResponse)
 def inventory_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
     consumables = db.query(models.Consumable).order_by(models.Consumable.description.asc()).all()
-    grouped_consumables = {station.id: [] for station in stations}
+    raw_materials = db.query(models.RawMaterial).order_by(models.RawMaterial.id.asc()).all()
+
+    low_stock_rows = []
     for consumable in consumables:
-        if consumable.station_id in grouped_consumables:
-            grouped_consumables[consumable.station_id].append(consumable)
+        if consumable.qty_on_hand <= consumable.reorder_point:
+            low_stock_rows.append({
+                "item_type": "Consumable",
+                "id": consumable.id,
+                "description": consumable.description,
+                "qty_on_hand": consumable.qty_on_hand,
+                "reorder_qty": consumable.reorder_point,
+                "qty_on_order": consumable.qty_on_order,
+                "qty_on_request": consumable.qty_on_request,
+            })
+    for material in raw_materials:
+        if material.qty_on_request > 0 and material.qty_on_hand <= material.qty_on_request:
+            low_stock_rows.append({
+                "item_type": "Raw Material",
+                "id": material.id,
+                "description": f"Gauge {material.gauge} ({material.length} x {material.width})",
+                "qty_on_hand": material.qty_on_hand,
+                "reorder_qty": material.qty_on_request,
+                "qty_on_order": material.qty_on_order,
+                "qty_on_request": material.qty_on_request,
+            })
+
+    open_purchase_requests = (
+        db.query(
+            models.PurchaseRequest.id,
+            models.PurchaseRequest.requested_at,
+            models.PurchaseRequest.requested_by,
+            models.PurchaseRequest.status,
+            func.count(models.PurchaseRequestLine.id).label("line_count"),
+            func.coalesce(func.sum(models.PurchaseRequestLine.quantity), 0).label("total_requested_qty"),
+        )
+        .outerjoin(
+            models.PurchaseRequestLine,
+            models.PurchaseRequestLine.purchase_request_id == models.PurchaseRequest.id,
+        )
+        .filter(models.PurchaseRequest.status == "open")
+        .group_by(
+            models.PurchaseRequest.id,
+            models.PurchaseRequest.requested_at,
+            models.PurchaseRequest.requested_by,
+            models.PurchaseRequest.status,
+        )
+        .order_by(models.PurchaseRequest.requested_at.desc())
+        .all()
+    )
+
+    on_order_rows = []
+    for consumable in consumables:
+        if consumable.qty_on_order > 0:
+            on_order_rows.append({
+                "item_type": "Consumable",
+                "id": consumable.id,
+                "description": consumable.description,
+                "qty_on_hand": consumable.qty_on_hand,
+                "qty_on_order": consumable.qty_on_order,
+                "qty_on_request": consumable.qty_on_request,
+            })
+    for material in raw_materials:
+        if material.qty_on_order > 0:
+            on_order_rows.append({
+                "item_type": "Raw Material",
+                "id": material.id,
+                "description": f"Gauge {material.gauge} ({material.length} x {material.width})",
+                "qty_on_hand": material.qty_on_hand,
+                "qty_on_order": material.qty_on_order,
+                "qty_on_request": material.qty_on_request,
+            })
+
     return templates.TemplateResponse(
         "inventory_dashboard.html",
         {
@@ -614,8 +681,9 @@ def inventory_dashboard(request: Request, db: Session = Depends(get_db), user=De
             "user": user,
             "top_nav": TOP_NAV,
             "entity_groups": ENTITY_GROUPS,
-            "stations": stations,
-            "grouped_consumables": grouped_consumables,
+            "low_stock_rows": low_stock_rows,
+            "open_purchase_requests": open_purchase_requests,
+            "on_order_rows": on_order_rows,
         },
     )
 

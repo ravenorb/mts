@@ -1,13 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Admin Dashboard</h2>
-<div class="action-row">
-  <a class="action-btn {% if active_tab!='users' %}secondary{% endif %}" href="/admin?tab=users">Users</a>
-  <a class="action-btn {% if active_tab!='stations' %}secondary{% endif %}" href="/admin?tab=stations">Stations</a>
-  <a class="action-btn {% if active_tab!='skills' %}secondary{% endif %}" href="/admin?tab=skills">Skills</a>
-  <a class="action-btn {% if active_tab!='employees' %}secondary{% endif %}" href="/admin?tab=employees">Employees</a>
-  <a class="action-btn {% if active_tab!='server-maintenance' %}secondary{% endif %}" href="/admin?tab=server-maintenance">Server Maintenance</a>
-</div>
 
 {% if message %}<div class="ok-banner">{{message}}</div>{% endif %}
 
