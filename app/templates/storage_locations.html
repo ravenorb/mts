@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Storage Locations</h2>
+<form method="post" action="/inventory/locations/add" class="panel-form">
+  <h3>Add Storage Location</h3>
+  <input name="location_description" placeholder="Location description" required />
+  <label><input type="checkbox" name="pallet_storage" /> Pallet storage</label>
+  <input type="number" name="shelf_count" placeholder="# of shelves" min="1" value="1" required />
+  <input type="number" name="bin_count" placeholder="# of bins" min="1" value="1" required />
+  <button type="submit">Add Storage Location</button>
+</form>
+<table>
+  <tr><th>Location ID</th><th>Location Description</th><th>Pallet Storage</th><th># of Shelves</th><th># of Bins</th><th>Actions</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="/inventory/locations/{{r.id}}">{{r.id}}</a></td>
+    <td>{{r.location_description}}</td>
+    <td>{{'Y' if r.pallet_storage else 'N'}}</td>
+    <td>{{r.shelf_count}}</td>
+    <td>{{r.bin_count}}</td>
+    <td><a href="/inventory/locations/{{r.id}}/edit">Edit</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Raw Materials</h2>
+<form method="post" action="/inventory/raw-materials/add" class="panel-form">
+  <h3>Add Material</h3>
+  <input name="gauge" placeholder="Gauge" required />
+  <input name="length" placeholder="Length" />
+  <input name="width" placeholder="Width" />
+  <input name="qty_on_hand" placeholder="Qty on hand" />
+  <input name="qty_on_request" placeholder="Qty on request" />
+  <input name="qty_on_order" placeholder="Qty on order" />
+  <select name="storage_location_id"><option value="">Storage Location</option>{% for l in locations %}<option value="{{l.id}}">{{l.id}}</option>{% endfor %}</select>
+  <button>Add Material</button>
+</form>
+<table>
+  <tr><th>Material ID</th><th>Gauge</th><th>Length</th><th>Width</th><th>Qty On Hand</th><th>Qty On Request</th><th>Qty On Order</th><th>Storage Location ID</th><th>Actions</th></tr>
+  {% for r in rows %}
+  <tr><form method="post" action="/inventory/raw-materials/{{r.id}}/edit">
+    <td>{{r.id}}</td><td><input name="gauge" value="{{r.gauge}}"></td><td><input name="length" value="{{r.length}}"></td><td><input name="width" value="{{r.width}}"></td>
+    <td><input name="qty_on_hand" value="{{r.qty_on_hand}}"></td><td><input name="qty_on_request" value="{{r.qty_on_request}}"></td><td><input name="qty_on_order" value="{{r.qty_on_order}}"></td>
+    <td><select name="storage_location_id"><option value="">-</option>{% for l in locations %}<option value="{{l.id}}" {% if r.storage_location_id==l.id %}selected{% endif %}>{{l.id}}</option>{% endfor %}</select></td>
+    <td><button>Save</button></form><form method="post" action="/inventory/raw-materials/{{r.id}}/delete" style="display:inline"><button>Delete</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

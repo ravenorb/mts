@@ -270,7 +270,9 @@ class Consumable(Base):
     unit_cost: Mapped[float] = mapped_column(Float, default=0)
     qty_on_hand: Mapped[float] = mapped_column(Float, default=0)
     qty_on_order: Mapped[float] = mapped_column(Float, default=0)
+    qty_on_request: Mapped[float] = mapped_column(Float, default=0)
     reorder_point: Mapped[float] = mapped_column(Float, default=0)
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
 
 
 class PurchaseRequest(Base):
@@ -298,3 +300,68 @@ class ConsumableUsageLog(Base):
     reason: Mapped[str] = mapped_column(Text)
     logged_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     purchase_request_id: Mapped[int | None] = mapped_column(ForeignKey("purchase_requests.id"), nullable=True)
+
+
+class StorageLocation(Base):
+    __tablename__ = "storage_locations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    location_description: Mapped[str] = mapped_column(String(200), default="")
+    pallet_storage: Mapped[bool] = mapped_column(Boolean, default=False)
+    shelf_count: Mapped[int] = mapped_column(Integer, default=1)
+    bin_count: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class StorageBin(Base):
+    __tablename__ = "storage_bins"
+    __table_args__ = (UniqueConstraint("storage_location_id", "shelf_id", "bin_id", name="uq_storage_bin"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    storage_location_id: Mapped[int] = mapped_column(ForeignKey("storage_locations.id"))
+    shelf_id: Mapped[int] = mapped_column(Integer)
+    bin_id: Mapped[int] = mapped_column(Integer)
+    qty: Mapped[float] = mapped_column(Float, default=0)
+    pallet_id: Mapped[str] = mapped_column(String(80), default="")
+    part_number: Mapped[str] = mapped_column(String(80), default="")
+    description: Mapped[str] = mapped_column(String(200), default="")
+
+
+class RawMaterial(Base):
+    __tablename__ = "raw_materials"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gauge: Mapped[str] = mapped_column(String(40), default="")
+    length: Mapped[float] = mapped_column(Float, default=0)
+    width: Mapped[float] = mapped_column(Float, default=0)
+    qty_on_hand: Mapped[float] = mapped_column(Float, default=0)
+    qty_on_request: Mapped[float] = mapped_column(Float, default=0)
+    qty_on_order: Mapped[float] = mapped_column(Float, default=0)
+    storage_location_id: Mapped[int | None] = mapped_column(ForeignKey("storage_locations.id"), nullable=True)
+
+
+class ScrapSteel(Base):
+    __tablename__ = "scrap_steel"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pallet_id: Mapped[str] = mapped_column(String(80), default="")
+    storage_id: Mapped[str] = mapped_column(String(80), default="")
+    weight: Mapped[float] = mapped_column(Float, default=0)
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("storage_locations.id"), nullable=True)
+    scrap_type: Mapped[str] = mapped_column(String(80), default="")
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PartInventory(Base):
+    __tablename__ = "part_inventory"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_id: Mapped[int] = mapped_column(ForeignKey("parts.id"), unique=True)
+    qty_on_hand_total: Mapped[float] = mapped_column(Float, default=0)
+    qty_queued_to_cut: Mapped[float] = mapped_column(Float, default=0)
+    qty_to_bend: Mapped[float] = mapped_column(Float, default=0)
+    qty_to_weld: Mapped[float] = mapped_column(Float, default=0)
+
+
+class DeliveredPartLot(Base):
+    __tablename__ = "delivered_part_lots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    frame_part_number: Mapped[str] = mapped_column(String(80))
+    qty_completed_in_lot: Mapped[float] = mapped_column(Float, default=0)
+    serial_begin: Mapped[str] = mapped_column(String(80), default="")
+    completed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    recorded_by: Mapped[str] = mapped_column(String(80), default="system")
