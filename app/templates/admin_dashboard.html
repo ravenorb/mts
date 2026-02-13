@@ -41,11 +41,9 @@
 {% if active_tab == 'server-maintenance' %}
   <h3>Server Maintenance</h3>
   <form method="post" action="/admin/server-maintenance" class="panel-form">
-    <label>Branch</label>
-    <select name="branch">
-      <option value="">-- current --</option>
-      {% for b in branches %}<option value="{{b}}" {% if b == active_branch %}selected{% endif %}>{{b}}</option>{% endfor %}
-    </select>
+    <label>Branch (locked)</label>
+    <input value="main" readonly />
+    <input type="hidden" name="branch" value="main" />
     <div class="action-row">
       <button type="submit" name="action" value="switch_branch">Switch Branch</button>
       <button type="submit" name="action" value="pull_latest">Pull Latest and Apply</button>
