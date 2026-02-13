@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Maintenance Request #{{maint.id}}</h2>
+<div class="card">
+  <div><strong>Date of Request:</strong> {{maint.created_at.date()}}</div>
+  <div><strong>Station ID:</strong> {{maint.station_id}}</div>
+  <div><strong>User ID:</strong> {{maint.requested_user_id or 'N/A'}}</div>
+  <div><strong>Description:</strong> {{maint.issue_description}}</div>
+  <div><strong>Date & Time:</strong> {{maint.created_at}}</div>
+  <div><strong>Status:</strong> {{maint.status}}</div>
+  {% if maint.completed_at %}<div><strong>Completed At:</strong> {{maint.completed_at}}</div>{% endif %}
+</div>
+
+<h3>Parts Used (Consumables)</h3>
+<table>
+  <tr><th>Logged At</th><th>Consumable ID</th><th>Quantity Used</th><th>Reason</th></tr>
+  {% for log in usage_logs %}
+  <tr>
+    <td>{{log.logged_at}}</td>
+    <td>{{log.consumable_id}}</td>
+    <td>{{(0 - log.quantity_delta) if log.quantity_delta < 0 else log.quantity_delta}}</td>
+    <td>{{log.reason}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if maint.status != 'complete' %}
+<form method="post" action="/maintenance/{{maint.id}}/consumables" class="panel-form">
+  <label>Add consumable usage</label>
+  <select name="consumable_id" required>
+    {% for c in consumables %}
+    <option value="{{c.id}}">{{c.id}} — {{c.description}}</option>
+    {% endfor %}
+  </select>
+  <input name="quantity_used" type="number" step="0.01" min="0.01" placeholder="Qty used" required />
+  <button type="submit">Add Part Used</button>
+</form>
+{% endif %}
+
+<form method="post" action="/maintenance/{{maint.id}}/save" class="panel-form">
+  <label>Work Comments</label>
+  <textarea name="work_comments" style="min-height:180px" placeholder="Describe work performed in detail..." {% if maint.status == 'complete' %}disabled{% endif %}>{{maint.work_comments or ''}}</textarea>
+
+  <label>Status</label>
+  <select name="status" {% if maint.status == 'complete' %}disabled{% endif %}>
+    {% for st in status_choices %}
+      <option value="{{st}}" {% if maint.status == st %}selected{% endif %}>{{st}}</option>
+    {% endfor %}
+  </select>
+
+  {% if maint.status == 'complete' %}
+    <div class="ok-banner">This request is complete and permanently locked.</div>
+  {% else %}
+    <button type="submit">Save</button>
+  {% endif %}
+</form>
+{% endblock %}

@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -54,6 +54,7 @@ MODEL_MAP = {
     "pallet_events": models.PalletEvent,
     "maintenance_requests": models.MaintenanceRequest,
     "station_maintenance_tasks": models.StationMaintenanceTask,
+    "maintenance_logs": models.MaintenanceLog,
     "consumables": models.Consumable,
     "purchase_requests": models.PurchaseRequest,
     "purchase_request_lines": models.PurchaseRequestLine,
@@ -82,7 +83,7 @@ FIELD_CHOICES = {
     ("pallets", "pallet_type"): ["manual", "split", "mixed"],
     ("queues", "status"): ["queued", "in_progress", "blocked", "done"],
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
-    ("maintenance_requests", "status"): ["open", "in_progress", "closed"],
+    ("maintenance_requests", "status"): ["submitted", "reviewed", "scheduled", "waiting on parts", "complete"],
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
     ("engineering_questions", "status"): ["open", "answered", "closed"],
 }
@@ -94,17 +95,48 @@ TOP_NAV = [
     ("Stations", "/stations"),
     ("Inventory", "/entity/consumables"),
     ("Purchasing", "/entity/purchase_requests"),
-    ("Maintenance", "/entity/maintenance_requests"),
+    ("Maintenance", "/maintenance"),
     ("Admin", "/admin"),
 ]
 
 ENTITY_GROUPS = {
     "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
     "Engineering": ["parts", "part_revisions", "part_revision_files", "engineering_questions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
-    "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
+    "Maintenance": ["maintenance_requests", "station_maintenance_tasks", "maintenance_logs"],
     "Inventory": ["consumables", "consumable_usage_logs", "purchase_request_lines"],
     "People": ["employees", "skills", "employee_skills", "users"],
 }
+
+MAINTENANCE_ACTIVE_STATUSES = ["submitted", "reviewed", "scheduled", "waiting on parts"]
+
+
+def ensure_upcoming_scheduled_requests(db: Session):
+    now = datetime.utcnow()
+    due_by = now + timedelta(days=14)
+    tasks = db.query(models.StationMaintenanceTask).filter_by(active=True).all()
+    for task in tasks:
+        if task.next_due_at is None:
+            task.next_due_at = now + timedelta(hours=task.frequency_hours)
+        if task.next_due_at > due_by:
+            continue
+        existing = db.query(models.MaintenanceRequest).filter(
+            models.MaintenanceRequest.maintenance_task_id == task.id,
+            models.MaintenanceRequest.request_type == "scheduled",
+            models.MaintenanceRequest.status != "complete",
+        ).first()
+        if existing:
+            continue
+        db.add(models.MaintenanceRequest(
+            station_id=task.station_id,
+            maintenance_task_id=task.id,
+            requested_by="system",
+            priority="normal",
+            status="scheduled",
+            issue_description=task.task_description,
+            request_type="scheduled",
+            scheduled_for=task.next_due_at,
+        ))
+    db.commit()
 
 
 def fk_choices(col, db: Session):
@@ -244,7 +276,7 @@ def root(request: Request, db: Session = Depends(get_db)):
     active = db.query(models.Pallet).filter(models.Pallet.status != "complete").count()
     hold = db.query(models.Pallet).filter(models.Pallet.status == "hold").count()
     bottlenecks = db.query(models.Queue.station_id, func.count(models.Queue.id)).group_by(models.Queue.station_id).all()
-    maintenance_open = db.query(models.MaintenanceRequest).filter_by(status="open").count()
+    maintenance_open = db.query(models.MaintenanceRequest).filter(models.MaintenanceRequest.status != "complete").count()
     low_stock = db.query(models.Consumable).filter(models.Consumable.qty_on_hand <= models.Consumable.reorder_point).count()
     staged = db.query(models.Pallet).filter(models.Pallet.status == "staged").count()
     in_progress = db.query(models.Pallet).filter(models.Pallet.status == "in_progress").count()
@@ -397,6 +429,96 @@ def stations_report_engineering_issue(station_id: int = Form(...), pallet_id: in
     db.add(models.EngineeringQuestion(station_id=station_id, pallet_id=pallet_id, asked_by=user.username, question_text=question_text, status="open"))
     db.commit()
     return RedirectResponse("/stations", status_code=302)
+
+
+@app.get("/maintenance", response_class=HTMLResponse)
+def maintenance_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    ensure_upcoming_scheduled_requests(db)
+    open_requests = db.query(models.MaintenanceRequest).filter(
+        models.MaintenanceRequest.request_type == "request",
+        models.MaintenanceRequest.status != "complete",
+    ).order_by(models.MaintenanceRequest.created_at.desc()).all()
+    upcoming = db.query(models.MaintenanceRequest).filter(
+        models.MaintenanceRequest.request_type == "scheduled",
+        models.MaintenanceRequest.status != "complete",
+        models.MaintenanceRequest.scheduled_for <= (datetime.utcnow() + timedelta(days=14)),
+    ).order_by(models.MaintenanceRequest.scheduled_for.asc(), models.MaintenanceRequest.created_at.asc()).all()
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    return templates.TemplateResponse("maintenance_dashboard.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "open_requests": open_requests,
+        "upcoming": upcoming,
+        "stations": stations,
+    })
+
+
+@app.get("/maintenance/{request_id}", response_class=HTMLResponse)
+def maintenance_request_detail(request_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
+    if not maint:
+        raise HTTPException(404)
+    usage_logs = db.query(models.ConsumableUsageLog).filter(models.ConsumableUsageLog.reason.like(f"maintenance_request:{request_id}:%")).order_by(models.ConsumableUsageLog.logged_at.asc()).all()
+    consumables = db.query(models.Consumable).order_by(models.Consumable.description.asc()).all()
+    return templates.TemplateResponse("maintenance_request_detail.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "maint": maint,
+        "usage_logs": usage_logs,
+        "consumables": consumables,
+        "status_choices": FIELD_CHOICES[("maintenance_requests", "status")],
+    })
+
+
+@app.post("/maintenance/{request_id}/consumables")
+def maintenance_add_consumable(request_id: int, consumable_id: int = Form(...), quantity_used: float = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
+    if not maint:
+        raise HTTPException(404)
+    if maint.status == "complete":
+        return RedirectResponse(f"/maintenance/{request_id}", status_code=302)
+    db.add(models.ConsumableUsageLog(
+        consumable_id=consumable_id,
+        station_id=maint.station_id,
+        quantity_delta=-abs(quantity_used),
+        reason=f"maintenance_request:{request_id}:{user.username}",
+    ))
+    db.commit()
+    return RedirectResponse(f"/maintenance/{request_id}", status_code=302)
+
+
+@app.post("/maintenance/{request_id}/save")
+def maintenance_save(request_id: int, work_comments: str = Form(""), status: str = Form("submitted"), db: Session = Depends(get_db), user=Depends(require_login)):
+    maint = db.query(models.MaintenanceRequest).filter_by(id=request_id).first()
+    if not maint:
+        raise HTTPException(404)
+    if maint.status == "complete":
+        return RedirectResponse(f"/maintenance/{request_id}", status_code=302)
+    if status not in FIELD_CHOICES[("maintenance_requests", "status")]:
+        raise HTTPException(422)
+
+    maint.work_comments = work_comments
+    maint.status = status
+    if status == "complete":
+        maint.completed_at = datetime.utcnow()
+        db.add(models.MaintenanceLog(
+            maintenance_request_id=maint.id,
+            station_id=maint.station_id,
+            closed_by=user.username,
+            closure_notes=work_comments,
+            closed_at=maint.completed_at,
+        ))
+        if maint.maintenance_task_id:
+            task = db.query(models.StationMaintenanceTask).filter_by(id=maint.maintenance_task_id).first()
+            if task:
+                task.last_completed_at = maint.completed_at
+                task.next_due_at = maint.completed_at + timedelta(hours=task.frequency_hours)
+    db.commit()
+    return RedirectResponse("/maintenance" if status == "complete" else f"/maintenance/{request_id}", status_code=302)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -603,6 +725,14 @@ async def entity_save(entity: str, request: Request, db: Session = Depends(get_d
         create_traveler_file(db, item.id)
     if entity == "cut_sheet_revisions":
         item.pdf_path = str(PDF_DIR / f"cut_sheet_{item.id}_{item.revision_code}.pdf")
+        db.commit()
+    if entity == "maintenance_requests":
+        if not item.requested_by:
+            item.requested_by = user.username
+        if not item.requested_user_id:
+            item.requested_user_id = user.id
+        if not item.status:
+            item.status = "submitted"
         db.commit()
     return RedirectResponse(f"/entity/{entity}", status_code=302)
 
