@@ -1,56 +1,15 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Station Dashboards</h2>
-<div class="action-row">
-  <a class="action-btn" href="/stations/login">Login Screen</a>
-  <a class="action-btn secondary" href="/entity/pallet_events/new">Go on Break</a>
-  <a class="action-btn secondary" href="/entity/pallet_events/new">End Shift</a>
-  <a class="action-btn" href="/entity/pallet_events/new">Start Work on Pallet</a>
-  <a class="action-btn" href="/entity/pallet_events/new">Stop Work on Pallet</a>
-  <a class="action-btn secondary" href="/entity/maintenance_requests/new">Report Maintenance Problem</a>
-  <a class="action-btn secondary" href="/maintenance">Maintenance Dashboard</a>
-  <a class="action-btn secondary" href="#engineering-issue">Report Engineering Issue</a>
-  <a class="action-btn secondary" href="/entity/consumable_usage_logs/new">Log Consumable Usage</a>
-  <a class="action-btn secondary" href="/entity/purchase_requests/new">Request Reorder of Consumable</a>
-  <a class="action-btn" href="/entity/pallets">Manage Pallets</a>
-</div>
-
-<h3>Manage Pallets Page Includes</h3>
-<ul>
-  <li>Combine / split pallets (existing split and combine workflow under pallet actions).</li>
-  <li>Update pallet location using move actions in pallet detail.</li>
-</ul>
-
-<h3>Show Next Pallet in Queue</h3>
-<table>
-  <tr><th>Queue Position</th><th>Station ID</th><th>Pallet ID</th><th>Status</th></tr>
-  {% for q in queue %}
-    <tr><td>{{q.queue_position}}</td><td>{{q.station_id}}</td><td>{{q.pallet_id}}</td><td>{{q.status}}</td></tr>
-  {% endfor %}
-</table>
-
-<h3>Stations</h3>
+<h2>Station Dashboard</h2>
 <div class="grid-list">
-  {% for st in stations %}
-  <div class="quick-pallet">
-    <strong>{{st.station_name}}</strong>
-    <span>Skill: {{st.skill_required or 'N/A'}}</span>
-  </div>
+  {% for station in station_cards %}
+  <a class="quick-pallet" href="/stations/{{station.id}}">
+    <strong>{{station.name}}</strong>
+    <span>Current assigned pallet: {{station.current_pallet}}</span>
+    <span>Queue length: {{station.queue_length}}</span>
+    <span>Hours operated today: {{station.hours_operated}}</span>
+    <span># of parts processed today: {{station.parts_processed}}</span>
+  </a>
   {% endfor %}
 </div>
-
-<h3 id="engineering-issue">Report Engineering Issue</h3>
-<form method="post" action="/stations/report-engineering-issue" class="panel-form">
-  <label>Station</label>
-  <select name="station_id" required>
-    {% for st in stations %}
-    <option value="{{st.id}}">{{st.station_name}}</option>
-    {% endfor %}
-  </select>
-  <label>Pallet ID (optional)</label>
-  <input name="pallet_id" type="number" min="1" />
-  <label>Question / issue</label>
-  <textarea name="question_text" required placeholder="Describe the engineering issue for this station..."></textarea>
-  <button type="submit">Submit to Engineering Queue</button>
-</form>
 {% endblock %}

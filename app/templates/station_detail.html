@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{station.station_name}} Dashboard</h2>
+
+<div class="action-row">
+  {% if active_pallet %}
+  <form method="post" action="/stations/{{station.id}}/save-work"><button type="submit">Save Pallet Work</button></form>
+  {% else %}
+  <form method="post" action="/stations/{{station.id}}/start-next"><button type="submit">Start Next Pallet</button></form>
+  {% endif %}
+  <a class="action-btn secondary" href="/entity/maintenance_requests/new">Report Maintenance</a>
+  <a class="action-btn secondary" href="/entity/engineering_questions/new">Report Engineering Problem</a>
+  <a class="action-btn secondary" href="/entity/consumable_usage_logs/new">Log Consumable Use</a>
+  <a class="action-btn secondary" href="/entity/purchase_requests/new">Reorder Request</a>
+  <a class="action-btn" href="/entity/pallets">Manage Pallet</a>
+</div>
+
+{% if not active_pallet %}
+<h3>Station Queue (top 5 queued pallets)</h3>
+<table id="queue-table">
+  <tr><th></th><th>Queue Position</th><th>Pallet</th><th>Status</th></tr>
+  {% for row in queue %}
+  <tr draggable="true" data-queue-id="{{row.id}}"><td>::</td><td>{{row.position}}</td><td>{{row.pallet.pallet_code if row.pallet else row.id}}</td><td>{{row.status}}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<h3>Active Pallet {{active_pallet.pallet_code}}</h3>
+<table>
+  <tr><th>Part #</th><th>Qty on pallet</th><th>Qty completed</th><th>Qty scrap</th></tr>
+  {% for part in pallet_parts %}
+  <tr><td>{{part.part_revision_id}}</td><td>{{part.planned_quantity}}</td><td>{{part.actual_quantity}}</td><td>{{part.scrap_quantity}}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<table>
+  <tr><th>Station Instructions</th></tr>
+  <tr><td>Follow posted safety checks, verify drawing revision before first piece, and record all quality issues immediately.</td></tr>
+  <tr>
+    {% for doc in station_documents %}
+    <td><a href="/stations/{{station.id}}?doc={{doc.id}}">{{doc.original_name}}</a></td>
+    {% endfor %}
+  </tr>
+  <tr>
+    <td colspan="{{station_documents|length if station_documents else 1}}">
+      {% if selected_doc %}
+        <strong>{{selected_doc.original_name}}</strong><br />
+        <code>{{selected_doc.stored_path}}</code>
+      {% else %}
+        No station documents or drawings assigned.
+      {% endif %}
+    </td>
+  </tr>
+</table>
+
+<script>
+(() => {
+  const table = document.getElementById('queue-table');
+  if (!table) return;
+  let dragRow = null;
+  table.querySelectorAll('tr[draggable="true"]').forEach((row) => {
+    row.addEventListener('dragstart', () => { dragRow = row; });
+    row.addEventListener('dragover', (e) => e.preventDefault());
+    row.addEventListener('drop', async () => {
+      if (!dragRow || dragRow === row) return;
+      row.parentNode.insertBefore(dragRow, row);
+      const order = [...table.querySelectorAll('tr[draggable="true"]')].map((r) => Number(r.dataset.queueId));
+      await fetch('/stations/{{station.id}}/queue-reorder', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({order})
+      });
+      window.location.reload();
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -31,6 +31,14 @@
     {% endfor %}
   </nav>
   {% endif %}
+  {% if request.url.path.startswith('/stations') and stations_nav %}
+  <nav class="section-nav" aria-label="Station sections">
+    {% for station in stations_nav %}
+      {% set station_href = '/stations/' ~ station.id %}
+      <a class="{% if request.url.path == station_href or request.url.path.startswith(station_href + '/') %}active{% endif %}" href="{{station_href}}">{{station.name}}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
   {% if request.url.path.startswith('/admin') %}
   <nav class="section-nav" aria-label="Admin sections">
     {% set admin_sections = [

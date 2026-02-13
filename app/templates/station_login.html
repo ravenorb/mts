@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Station Login Screen</h2>
+<h2>{{station.station_name}} Login</h2>
 {% if error %}<div class="form-error-banner">{{error}}</div>{% endif %}
 {% if ok %}<div class="ok-banner">{{ok}}</div>{% endif %}
 <form method="post" class="panel-form">
@@ -8,6 +8,6 @@
   <input name="station_user_id" required />
   <label>Password</label>
   <input name="station_password" type="password" required />
-  <button type="submit">Log in to Station</button>
+  <button type="submit">Log in to {{station.station_name}}</button>
 </form>
 {% endblock %}
