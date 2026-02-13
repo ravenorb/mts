@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Engineering Dashboard</h2>
+<div class="action-row">
+  <a class="action-btn" href="/entity/parts/new">Create Part</a>
+  <a class="action-btn" href="/entity/part_revisions/new">Create Revision</a>
+  <a class="action-btn" href="/entity/part_revisions">Edit Revision</a>
+  <a class="action-btn" href="/entity/part_revisions">View Part Revision</a>
+  <a class="action-btn secondary" href="/engineering/add-machine-program">Add Machine Program File (TODO)</a>
+</div>
+
+<h3>Queue: Parts with no revision</h3>
+<table>
+  <tr><th>Part ID</th><th>Part Number</th><th>Description</th><th>Action</th></tr>
+  {% for p in missing_revisions %}
+  <tr>
+    <td>{{p.id}}</td><td>{{p.part_number}}</td><td>{{p.description}}</td>
+    <td><a href="/entity/part_revisions/new">Create Revision</a></td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Queue: Open engineering questions from stations</h3>
+<table>
+  <tr><th>Created</th><th>Station ID</th><th>Pallet ID</th><th>Question</th><th>Status</th></tr>
+  {% for q in open_questions %}
+  <tr>
+    <td>{{q.created_at}}</td>
+    <td>{{q.station_id}}</td>
+    <td>{{q.pallet_id or '-'}}</td>
+    <td>{{q.question_text}}</td>
+    <td>{{q.status}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Latest Revision File Uploads</h3>
+<table>
+  <tr><th>Revision ID</th><th>Type</th><th>File</th><th>Stations</th><th>Uploaded</th></tr>
+  {% for f in latest_files %}
+  <tr>
+    <td><a href="/engineering/revisions/{{f.part_revision_id}}/files">{{f.part_revision_id}}</a></td>
+    <td>{{f.file_type}}</td>
+    <td>{{f.original_name}}</td>
+    <td>{{f.station_ids_csv or 'none'}}</td>
+    <td>{{f.uploaded_at}}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

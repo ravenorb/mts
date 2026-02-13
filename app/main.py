@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,12 +22,16 @@ templates = Jinja2Templates(directory="app/templates")
 
 DRAWING_DIR = Path(os.getenv("DRAWING_DATA_PATH", "/data/drawings"))
 PDF_DIR = Path(os.getenv("PDF_DATA_PATH", "/data/pdfs"))
+PART_FILE_DIR = Path(os.getenv("PART_FILE_DATA_PATH", "/data/part_revision_files"))
 DRAWING_DIR.mkdir(parents=True, exist_ok=True)
 PDF_DIR.mkdir(parents=True, exist_ok=True)
+PART_FILE_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_MAP = {
     "parts": models.Part,
     "part_revisions": models.PartRevision,
+    "part_revision_files": models.PartRevisionFile,
+    "engineering_questions": models.EngineeringQuestion,
     "part_process_definitions": models.PartProcessDefinition,
     "boms": models.BillOfMaterial,
     "cut_sheets": models.CutSheet,
@@ -72,13 +76,14 @@ FIELD_CHOICES = {
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
     ("maintenance_requests", "status"): ["open", "in_progress", "closed"],
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
+    ("engineering_questions", "status"): ["open", "answered", "closed"],
 }
 
 TOP_NAV = [
     ("Dashboard", "/"),
     ("Production", "/production"),
-    ("Engineering", "/engineering/upload"),
-    ("Stations", "/entity/stations"),
+    ("Engineering", "/engineering"),
+    ("Stations", "/stations"),
     ("Inventory", "/entity/consumables"),
     ("Purchasing", "/entity/purchase_requests"),
     ("Maintenance", "/entity/maintenance_requests"),
@@ -87,7 +92,7 @@ TOP_NAV = [
 
 ENTITY_GROUPS = {
     "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
-    "Engineering": ["parts", "part_revisions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
+    "Engineering": ["parts", "part_revisions", "part_revision_files", "engineering_questions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
     "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
     "Inventory": ["consumables", "consumable_usage_logs", "purchase_request_lines"],
     "People": ["employees", "skills", "employee_skills", "users"],
@@ -289,35 +294,95 @@ def production_create_pallet(part_revision_id: int = Form(...), quantity: float 
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
 
-@app.get("/engineering/upload", response_class=HTMLResponse)
-def engineering_upload_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": None, "error": None})
+@app.get("/engineering", response_class=HTMLResponse)
+def engineering_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    missing_revisions = db.query(models.Part).outerjoin(models.PartRevision, models.PartRevision.part_id == models.Part.id).filter(models.PartRevision.id.is_(None)).order_by(models.Part.created_at.desc()).all()
+    open_questions = db.query(models.EngineeringQuestion).filter_by(status="open").order_by(models.EngineeringQuestion.created_at.desc()).limit(30).all()
+    latest_files = db.query(models.PartRevisionFile).order_by(models.PartRevisionFile.uploaded_at.desc()).limit(20).all()
+    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "missing_revisions": missing_revisions, "open_questions": open_questions, "latest_files": latest_files})
 
 
-@app.post("/engineering/upload", response_class=HTMLResponse)
-def engineering_upload_save(request: Request, part_revision_id: int = Form(...), program_type: str = Form(...), program_path: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+@app.get("/engineering/revisions/{part_revision_id}/files", response_class=HTMLResponse)
+def engineering_revision_files(part_revision_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    part_revision = db.query(models.PartRevision).filter_by(id=part_revision_id).first()
+    if not part_revision:
+        raise HTTPException(404)
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    files = db.query(models.PartRevisionFile).filter_by(part_revision_id=part_revision_id).order_by(models.PartRevisionFile.uploaded_at.desc()).all()
+    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revision": part_revision, "stations": stations, "files": files, "message": None, "error": None})
+
+
+@app.post("/engineering/revisions/{part_revision_id}/files", response_class=HTMLResponse)
+async def engineering_revision_files_save(part_revision_id: int, request: Request, file_type: str = Form(...), available_station_ids: list[int] = Form([]), upload_file: UploadFile = File(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    part_revision = db.query(models.PartRevision).filter_by(id=part_revision_id).first()
+    if not part_revision:
+        raise HTTPException(404)
+
+    allowed_types = {"laser", "waterjet", "welder_module", "drawing", "pdf"}
+    if file_type not in allowed_types:
+        raise HTTPException(422, "Invalid file type")
+
+    safe_name = Path(upload_file.filename or "upload.dat").name
+    stored_name = f"pr{part_revision_id}_{int(datetime.utcnow().timestamp())}_{safe_name}"
+    out_path = PART_FILE_DIR / stored_name
+    data = await upload_file.read()
+    out_path.write_bytes(data)
+
+    station_csv = ",".join(str(sid) for sid in sorted(set(available_station_ids)))
+    db.add(models.PartRevisionFile(part_revision_id=part_revision_id, file_type=file_type, original_name=safe_name, stored_path=str(out_path), station_ids_csv=station_csv, uploaded_by=user.username))
+
     process = db.query(models.PartProcessDefinition).filter_by(part_revision_id=part_revision_id).first()
     if not process:
         process = models.PartProcessDefinition(part_revision_id=part_revision_id)
         db.add(process)
-        db.commit()
-        db.refresh(process)
-    if program_type == "laser":
+
+    if file_type == "laser":
         process.laser_required = True
-        process.laser_program_path = program_path
-    elif program_type == "waterjet":
+        process.laser_program_path = str(out_path)
+    elif file_type == "waterjet":
         process.waterjet_required = True
-        process.waterjet_program_path = program_path
-    elif program_type == "robotic_weld":
+        process.waterjet_program_path = str(out_path)
+    elif file_type == "welder_module":
         process.robotic_weld_required = True
-        process.robotic_weld_program_path = program_path
+        process.robotic_weld_program_path = str(out_path)
     else:
         process.manual_weld_required = True
-        process.manual_weld_drawing_path = program_path
+        process.manual_weld_drawing_path = str(out_path)
+
     db.commit()
-    part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revisions": part_revisions, "message": "Program path saved and revision data locked for production use.", "error": None})
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    files = db.query(models.PartRevisionFile).filter_by(part_revision_id=part_revision_id).order_by(models.PartRevisionFile.uploaded_at.desc()).all()
+    return templates.TemplateResponse("engineering_upload.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "part_revision": part_revision, "stations": stations, "files": files, "message": "Revision file uploaded and station access set.", "error": None})
+
+
+@app.get("/engineering/add-machine-program", response_class=HTMLResponse)
+def engineering_machine_program_stub(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS})
+
+
+@app.get("/stations", response_class=HTMLResponse)
+def stations_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    queue = db.query(models.Queue).filter(models.Queue.status.in_(["queued", "in_progress"])).order_by(models.Queue.queue_position.asc()).limit(30).all()
+    return templates.TemplateResponse("stations_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "stations": stations, "queue": queue})
+
+
+@app.get("/stations/login", response_class=HTMLResponse)
+def stations_login(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("station_login.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "error": None, "ok": None})
+
+
+@app.post("/stations/login", response_class=HTMLResponse)
+def stations_login_submit(request: Request, station_user_id: str = Form(...), station_password: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    ok = bool(station_user_id.strip()) and bool(station_password.strip())
+    return templates.TemplateResponse("station_login.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "error": None if ok else "Missing credentials", "ok": "Station login accepted (stub)." if ok else None})
+
+
+@app.post("/stations/report-engineering-issue")
+def stations_report_engineering_issue(station_id: int = Form(...), pallet_id: int | None = Form(None), question_text: str = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    db.add(models.EngineeringQuestion(station_id=station_id, pallet_id=pallet_id, asked_by=user.username, question_text=question_text, status="open"))
+    db.commit()
+    return RedirectResponse("/stations", status_code=302)
 
 
 @app.get("/login", response_class=HTMLResponse)
