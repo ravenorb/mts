@@ -1,19 +1,5 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="station-title-block">
-  <form id="station-title-form" method="post" action="/maintenance/stations/{{station.id}}/title" class="inline-title-form">
-    <div id="station-title-display" class="station-inline-title">
-      <h2>{{station.station_code or '%02d'|format(station.id)}} {{station.station_name}}</h2>
-      <a href="#" id="toggle-title-edit" class="small-link">edit</a>
-    </div>
-    <div id="station-title-edit" class="station-inline-edit hidden">
-      <input type="text" name="station_code" value="{{station.station_code or '%02d'|format(station.id)}}" maxlength="2" pattern="\d{2}" required />
-      <input type="text" name="station_name" value="{{station.station_name}}" maxlength="80" required />
-      <button type="submit" class="small-link-btn">save</button>
-    </div>
-  </form>
-</div>
-
 <div class="page-toolbar maintenance-submenu-row">
   <div class="action-row">
     <a class="action-btn secondary {% if active_tab == 'consumables' %}active-tab{% endif %}" href="/maintenance/stations/{{station.id}}/edit?tab=consumables">Consumables</a>
@@ -22,25 +8,34 @@
   </div>
   <form method="post" action="/maintenance/stations/{{station.id}}/settings" class="inline-settings-form">
     <input type="hidden" name="tab" value="{{active_tab}}" />
-    <label>Required Skill
-      <select name="skill_required" onchange="this.form.submit()">
+    <select name="skill_required" onchange="this.form.submit()" aria-label="Required Skill">
         <option value="">Unassigned</option>
         {% for skill in skills %}
           <option value="{{skill.name}}" {% if station.skill_required == skill.name %}selected{% endif %}>{{skill.name}}</option>
         {% endfor %}
       </select>
-    </label>
-    <label>Status
-      <select name="station_status" onchange="this.form.submit()">
+    <select name="station_status" onchange="this.form.submit()" aria-label="Status">
         {% for status in status_choices %}
           <option value="{{status}}" {% if station.station_status == status %}selected{% endif %}>{{status}}</option>
         {% endfor %}
       </select>
-    </label>
   </form>
 </div>
 
 {% if active_tab == 'consumables' %}
+  <div class="page-toolbar maintenance-tab-header">
+    <form id="station-title-form" method="post" action="/maintenance/stations/{{station.id}}/title" class="inline-title-form">
+      <div id="station-title-display" class="station-inline-title">
+        <h2>{{station.station_code or '%02d'|format(station.id)}} {{station.station_name}}</h2>
+        <a href="#" id="toggle-title-edit" class="small-link">edit</a>
+      </div>
+      <div id="station-title-edit" class="station-inline-edit hidden">
+        <input type="text" name="station_code" value="{{station.station_code or '%02d'|format(station.id)}}" maxlength="2" pattern="\d{2}" required />
+        <input type="text" name="station_name" value="{{station.station_name}}" maxlength="80" required />
+        <button type="submit" class="small-link-btn">save</button>
+      </div>
+    </form>
+  </div>
   <table>
     <tr><th>ID</th><th>Description</th><th>On Hand</th><th>On Order</th></tr>
     {% for item in consumables %}
@@ -53,8 +48,18 @@
     {% endfor %}
   </table>
 {% elif active_tab == 'maintenance' %}
-  <div class="page-toolbar">
-    <h3>Maintenance Schedule</h3>
+  <div class="page-toolbar maintenance-tab-header">
+    <form id="station-title-form" method="post" action="/maintenance/stations/{{station.id}}/title" class="inline-title-form">
+      <div id="station-title-display" class="station-inline-title">
+        <h2>{{station.station_code or '%02d'|format(station.id)}} {{station.station_name}}</h2>
+        <a href="#" id="toggle-title-edit" class="small-link">edit</a>
+      </div>
+      <div id="station-title-edit" class="station-inline-edit hidden">
+        <input type="text" name="station_code" value="{{station.station_code or '%02d'|format(station.id)}}" maxlength="2" pattern="\d{2}" required />
+        <input type="text" name="station_name" value="{{station.station_name}}" maxlength="80" required />
+        <button type="submit" class="small-link-btn">save</button>
+      </div>
+    </form>
     <button type="button" class="action-btn" data-modal-target="new-task-modal">Add Item</button>
   </div>
   <table>
@@ -77,8 +82,18 @@
     {% endfor %}
   </table>
 {% else %}
-  <div class="page-toolbar">
-    <h3>Maintenance Log</h3>
+  <div class="page-toolbar maintenance-tab-header">
+    <form id="station-title-form" method="post" action="/maintenance/stations/{{station.id}}/title" class="inline-title-form">
+      <div id="station-title-display" class="station-inline-title">
+        <h2>{{station.station_code or '%02d'|format(station.id)}} {{station.station_name}}</h2>
+        <a href="#" id="toggle-title-edit" class="small-link">edit</a>
+      </div>
+      <div id="station-title-edit" class="station-inline-edit hidden">
+        <input type="text" name="station_code" value="{{station.station_code or '%02d'|format(station.id)}}" maxlength="2" pattern="\d{2}" required />
+        <input type="text" name="station_name" value="{{station.station_name}}" maxlength="80" required />
+        <button type="submit" class="small-link-btn">save</button>
+      </div>
+    </form>
     <button type="button" class="action-btn" data-modal-target="new-log-modal">Add Item</button>
   </div>
   <table>
