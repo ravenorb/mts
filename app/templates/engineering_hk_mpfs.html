@@ -29,7 +29,7 @@
 
 <div class="hk-components-header">
   <h3>Components</h3>
-  <a class="action-btn small-link-btn" href="#">Add</a>
+  <button type="button" id="add-component-btn" class="action-btn small-link-btn">Add</button>
 </div>
 
 <table>
@@ -46,6 +46,27 @@
   const form = document.getElementById('hk-mpf-form');
   const status = document.getElementById('hk-parse-status');
   const componentsBody = document.getElementById('components-body');
+  const addComponentBtn = document.getElementById('add-component-btn');
+
+  const createComponentRow = (component = {}) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><input type="number" step="1" min="0" value="${component.sheet_qty ?? ''}"/></td>
+      <td><input type="number" step="0.0001" min="0" value="${component.assy_qty ?? ''}"/></td>
+      <td><input type="text" value="${component.component_id ?? ''}"/></td>
+      <td><button type="button" class="delete-component-btn">Delete</button></td>
+    `;
+
+    row.querySelector('.delete-component-btn').addEventListener('click', () => {
+      row.remove();
+    });
+
+    return row;
+  };
+
+  addComponentBtn.addEventListener('click', () => {
+    componentsBody.appendChild(createComponentRow());
+  });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -71,14 +92,7 @@
 
     componentsBody.innerHTML = '';
     for (const component of parsed.components || []) {
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td>${component.sheet_qty ?? ''}</td>
-        <td>${component.assy_qty ?? ''}</td>
-        <td>${component.component_id ?? ''}</td>
-        <td><button type="button">Delete</button></td>
-      `;
-      componentsBody.appendChild(row);
+      componentsBody.appendChild(createComponentRow(component));
     }
 
     status.textContent = 'Parse complete.';
