@@ -1,14 +1,5 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="page-toolbar">
-  <div class="action-row">
-    {% for st in stations %}
-      <a class="action-btn secondary {% if st.id == station.id %}active-tab{% endif %}" href="/maintenance/stations/{{st.id}}/edit">{{st.station_code or '%02d'|format(st.id)}} {{st.station_name}}</a>
-    {% endfor %}
-  </div>
-  <a class="action-btn" href="/entity/stations/new">Add Station</a>
-</div>
-
 <div class="station-title-block">
   <form id="station-title-form" method="post" action="/maintenance/stations/{{station.id}}/title" class="inline-title-form">
     <div id="station-title-display" class="station-inline-title">
@@ -23,10 +14,11 @@
   </form>
 </div>
 
-<div class="page-toolbar">
+<div class="page-toolbar maintenance-submenu-row">
   <div class="action-row">
     <a class="action-btn secondary {% if active_tab == 'consumables' %}active-tab{% endif %}" href="/maintenance/stations/{{station.id}}/edit?tab=consumables">Consumables</a>
     <a class="action-btn secondary {% if active_tab == 'maintenance' %}active-tab{% endif %}" href="/maintenance/stations/{{station.id}}/edit?tab=maintenance">Maintenance Schedule</a>
+    <a class="action-btn secondary {% if active_tab == 'log' %}active-tab{% endif %}" href="/maintenance/stations/{{station.id}}/edit?tab=log">Maintenance Log</a>
   </div>
   <form method="post" action="/maintenance/stations/{{station.id}}/settings" class="inline-settings-form">
     <input type="hidden" name="tab" value="{{active_tab}}" />
@@ -49,10 +41,6 @@
 </div>
 
 {% if active_tab == 'consumables' %}
-  <div class="page-toolbar">
-    <div></div>
-    <a class="action-btn" href="/entity/consumables/new">Add Item</a>
-  </div>
   <table>
     <tr><th>ID</th><th>Description</th><th>On Hand</th><th>On Order</th></tr>
     {% for item in consumables %}
@@ -64,10 +52,10 @@
     </tr>
     {% endfor %}
   </table>
-{% else %}
+{% elif active_tab == 'maintenance' %}
   <div class="page-toolbar">
-    <div></div>
-    <a class="action-btn" href="#new-task">Add Item</a>
+    <h3>Maintenance Schedule</h3>
+    <button type="button" class="action-btn" data-modal-target="new-task-modal">Add Item</button>
   </div>
   <table>
     <tr><th>Description</th><th>Frequency (hours)</th><th>Responsible Role</th><th>Active</th><th>Actions</th></tr>
@@ -88,35 +76,45 @@
     </tr>
     {% endfor %}
   </table>
+{% else %}
+  <div class="page-toolbar">
+    <h3>Maintenance Log</h3>
+    <button type="button" class="action-btn" data-modal-target="new-log-modal">Add Item</button>
+  </div>
+  <table>
+    <tr><th>ID</th><th>Closed By</th><th>Notes</th><th>Closed At</th></tr>
+    {% for log in logs %}
+    <tr>
+      <td>{{log.id}}</td>
+      <td>{{log.closed_by}}</td>
+      <td>{{log.closure_notes}}</td>
+      <td>{{log.closed_at}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+{% endif %}
 
-  <form id="new-task" class="panel-form" method="post" action="/maintenance/stations/{{station.id}}/tasks/new">
+<dialog id="new-task-modal" class="modal-dialog">
+  <form class="panel-form" method="post" action="/maintenance/stations/{{station.id}}/tasks/new">
     <label>Description<input type="text" name="task_description" required /></label>
     <label>Frequency (hours)<input type="number" step="0.1" min="1" name="frequency_hours" required /></label>
     <label>Responsible Role<input type="text" name="responsible_role" value="maintenance" /></label>
-    <button type="submit">Add Item</button>
+    <div class="action-row">
+      <button type="submit">Add Item</button>
+      <button type="button" class="close-modal">Cancel</button>
+    </div>
   </form>
-{% endif %}
+</dialog>
 
-<div class="page-toolbar">
-  <h3>Maintenance Log</h3>
-  <a class="action-btn" href="#new-log">Add Item</a>
-</div>
-<table>
-  <tr><th>ID</th><th>Closed By</th><th>Notes</th><th>Closed At</th></tr>
-  {% for log in logs %}
-  <tr>
-    <td>{{log.id}}</td>
-    <td>{{log.closed_by}}</td>
-    <td>{{log.closure_notes}}</td>
-    <td>{{log.closed_at}}</td>
-  </tr>
-  {% endfor %}
-</table>
-
-<form id="new-log" class="panel-form" method="post" action="/maintenance/stations/{{station.id}}/log/new">
-  <label>Entry Notes<textarea name="closure_notes" placeholder="Add maintenance log entry"></textarea></label>
-  <button type="submit">Add Item</button>
-</form>
+<dialog id="new-log-modal" class="modal-dialog">
+  <form class="panel-form" method="post" action="/maintenance/stations/{{station.id}}/log/new">
+    <label>Entry Notes<textarea name="closure_notes" placeholder="Add maintenance log entry"></textarea></label>
+    <div class="action-row">
+      <button type="submit">Add Item</button>
+      <button type="button" class="close-modal">Cancel</button>
+    </div>
+  </form>
+</dialog>
 
 <script>
   const toggle = document.getElementById('toggle-title-edit');
@@ -129,5 +127,23 @@
       edit.classList.remove('hidden');
     });
   }
+
+  document.querySelectorAll('[data-modal-target]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const modal = document.getElementById(btn.dataset.modalTarget);
+      if (modal && typeof modal.showModal === 'function') {
+        modal.showModal();
+      }
+    });
+  });
+
+  document.querySelectorAll('.close-modal').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const modal = btn.closest('dialog');
+      if (modal) {
+        modal.close();
+      }
+    });
+  });
 </script>
 {% endblock %}

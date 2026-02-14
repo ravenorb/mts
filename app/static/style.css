@@ -63,3 +63,8 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .inline-settings-form label{display:flex;flex-direction:column;font-size:12px;gap:3px}
 .modal-dialog{border:none;border-radius:8px;padding:0;max-width:620px;width:calc(100% - 24px)}
 .modal-dialog::backdrop{background:rgba(15,23,42,.45)}
+
+
+.section-nav-wrap{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.section-nav-add{color:#001f54!important;text-decoration:none;background:#e2e8f0;border:1px solid #94a3b8;padding:7px 10px;border-radius:5px;font-size:13px}
+.maintenance-submenu-row .action-btn{padding:7px 10px;font-size:13px;margin:0}

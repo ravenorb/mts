@@ -31,6 +31,17 @@
     {% endfor %}
   </nav>
   {% endif %}
+  {% if request.url.path.startswith('/maintenance') and maintenance_stations %}
+  <div class="section-nav-wrap" aria-label="Maintenance stations">
+    <nav class="section-nav">
+      {% for station in maintenance_stations %}
+        {% set station_href = '/maintenance/stations/' ~ station.id ~ '/edit' %}
+        <a class="{% if request.url.path == station_href or request.url.path.startswith(station_href + '/') %}active{% endif %}" href="{{station_href}}">{{station.code}} {{station.name}}</a>
+      {% endfor %}
+    </nav>
+    <a class="section-nav-add" href="/entity/stations/new">Add Station</a>
+  </div>
+  {% endif %}
   {% if request.url.path.startswith('/stations') and stations_nav %}
   <nav class="section-nav" aria-label="Station sections">
     {% for station in stations_nav %}
