@@ -16,6 +16,13 @@
     {% endfor %}
     <a href="/logout">Logout</a>
   </nav>
+  {% if request.url.path.startswith('/engineering') and engineering_sections %}
+  <nav class="section-nav" aria-label="Engineering sections">
+    {% for section in engineering_sections %}
+      <a class="{% if request.url.path == section.href or request.url.path.startswith(section.href + '/') %}active{% endif %}" href="{{section.href}}">{{section.label}}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
   {% if request.url.path.startswith('/inventory') %}
   <nav class="section-nav" aria-label="Inventory sections">
     {% set inventory_sections = [
