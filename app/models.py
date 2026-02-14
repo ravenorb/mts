@@ -161,8 +161,10 @@ class ProductionOrder(Base):
 class Station(Base):
     __tablename__ = "stations"
     id: Mapped[int] = mapped_column(primary_key=True)
+    station_code: Mapped[str] = mapped_column(String(2), default="")
     station_name: Mapped[str] = mapped_column(String(80), unique=True)
     skill_required: Mapped[str] = mapped_column(String(80), default="")
+    station_status: Mapped[str] = mapped_column(String(40), default="ready/idle")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

@@ -1,0 +1,133 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="action-row">
+    {% for st in stations %}
+      <a class="action-btn secondary {% if st.id == station.id %}active-tab{% endif %}" href="/maintenance/stations/{{st.id}}/edit">{{st.station_code or '%02d'|format(st.id)}} {{st.station_name}}</a>
+    {% endfor %}
+  </div>
+  <a class="action-btn" href="/entity/stations/new">Add Station</a>
+</div>
+
+<div class="station-title-block">
+  <form id="station-title-form" method="post" action="/maintenance/stations/{{station.id}}/title" class="inline-title-form">
+    <div id="station-title-display" class="station-inline-title">
+      <h2>{{station.station_code or '%02d'|format(station.id)}} {{station.station_name}}</h2>
+      <a href="#" id="toggle-title-edit" class="small-link">edit</a>
+    </div>
+    <div id="station-title-edit" class="station-inline-edit hidden">
+      <input type="text" name="station_code" value="{{station.station_code or '%02d'|format(station.id)}}" maxlength="2" pattern="\d{2}" required />
+      <input type="text" name="station_name" value="{{station.station_name}}" maxlength="80" required />
+      <button type="submit" class="small-link-btn">save</button>
+    </div>
+  </form>
+</div>
+
+<div class="page-toolbar">
+  <div class="action-row">
+    <a class="action-btn secondary {% if active_tab == 'consumables' %}active-tab{% endif %}" href="/maintenance/stations/{{station.id}}/edit?tab=consumables">Consumables</a>
+    <a class="action-btn secondary {% if active_tab == 'maintenance' %}active-tab{% endif %}" href="/maintenance/stations/{{station.id}}/edit?tab=maintenance">Maintenance Schedule</a>
+  </div>
+  <form method="post" action="/maintenance/stations/{{station.id}}/settings" class="inline-settings-form">
+    <input type="hidden" name="tab" value="{{active_tab}}" />
+    <label>Required Skill
+      <select name="skill_required" onchange="this.form.submit()">
+        <option value="">Unassigned</option>
+        {% for skill in skills %}
+          <option value="{{skill.name}}" {% if station.skill_required == skill.name %}selected{% endif %}>{{skill.name}}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Status
+      <select name="station_status" onchange="this.form.submit()">
+        {% for status in status_choices %}
+          <option value="{{status}}" {% if station.station_status == status %}selected{% endif %}>{{status}}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+</div>
+
+{% if active_tab == 'consumables' %}
+  <div class="page-toolbar">
+    <div></div>
+    <a class="action-btn" href="/entity/consumables/new">Add Item</a>
+  </div>
+  <table>
+    <tr><th>ID</th><th>Description</th><th>On Hand</th><th>On Order</th></tr>
+    {% for item in consumables %}
+    <tr>
+      <td>{{item.id}}</td>
+      <td>{{item.description}}</td>
+      <td>{{item.qty_on_hand}}</td>
+      <td>{{item.qty_on_order}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <div class="page-toolbar">
+    <div></div>
+    <a class="action-btn" href="#new-task">Add Item</a>
+  </div>
+  <table>
+    <tr><th>Description</th><th>Frequency (hours)</th><th>Responsible Role</th><th>Active</th><th>Actions</th></tr>
+    {% for task in tasks %}
+    <tr>
+      <form method="post" action="/maintenance/stations/{{station.id}}/tasks/{{task.id}}/save">
+        <td><input type="text" name="task_description" value="{{task.task_description}}" required /></td>
+        <td><input type="number" step="0.1" min="1" name="frequency_hours" value="{{task.frequency_hours}}" required /></td>
+        <td><input type="text" name="responsible_role" value="{{task.responsible_role}}" /></td>
+        <td><input type="checkbox" name="active" {% if task.active %}checked{% endif %} /></td>
+        <td>
+          <button type="submit">Edit</button>
+      </form>
+          <form method="post" action="/maintenance/stations/{{station.id}}/tasks/{{task.id}}/delete" style="display:inline">
+            <button type="submit">Delete</button>
+          </form>
+        </td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <form id="new-task" class="panel-form" method="post" action="/maintenance/stations/{{station.id}}/tasks/new">
+    <label>Description<input type="text" name="task_description" required /></label>
+    <label>Frequency (hours)<input type="number" step="0.1" min="1" name="frequency_hours" required /></label>
+    <label>Responsible Role<input type="text" name="responsible_role" value="maintenance" /></label>
+    <button type="submit">Add Item</button>
+  </form>
+{% endif %}
+
+<div class="page-toolbar">
+  <h3>Maintenance Log</h3>
+  <a class="action-btn" href="#new-log">Add Item</a>
+</div>
+<table>
+  <tr><th>ID</th><th>Closed By</th><th>Notes</th><th>Closed At</th></tr>
+  {% for log in logs %}
+  <tr>
+    <td>{{log.id}}</td>
+    <td>{{log.closed_by}}</td>
+    <td>{{log.closure_notes}}</td>
+    <td>{{log.closed_at}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<form id="new-log" class="panel-form" method="post" action="/maintenance/stations/{{station.id}}/log/new">
+  <label>Entry Notes<textarea name="closure_notes" placeholder="Add maintenance log entry"></textarea></label>
+  <button type="submit">Add Item</button>
+</form>
+
+<script>
+  const toggle = document.getElementById('toggle-title-edit');
+  const display = document.getElementById('station-title-display');
+  const edit = document.getElementById('station-title-edit');
+  if (toggle) {
+    toggle.addEventListener('click', function (event) {
+      event.preventDefault();
+      display.classList.add('hidden');
+      edit.classList.remove('hidden');
+    });
+  }
+</script>
+{% endblock %}

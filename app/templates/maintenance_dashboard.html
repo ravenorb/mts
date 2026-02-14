@@ -39,9 +39,12 @@
 </table>
 
 <h3>Station Quick Access</h3>
-<div class="action-row">
-  {% for st in stations %}
-    <a class="action-btn secondary" href="/admin/stations/{{st.id}}/view">{{st.station_name}}</a>
-  {% endfor %}
+<div class="page-toolbar">
+  <div class="action-row">
+    {% for st in stations %}
+      <a class="action-btn secondary" href="/maintenance/stations/{{st.id}}/edit">{{st.station_code or '%02d'|format(st.id)}} {{st.station_name}}</a>
+    {% endfor %}
+  </div>
+  <a class="action-btn" href="/entity/stations/new">Add Station</a>
 </div>
 {% endblock %}
