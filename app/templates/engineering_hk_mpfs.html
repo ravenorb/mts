@@ -42,11 +42,15 @@
   <tbody id="components-body"></tbody>
 </table>
 
+<h3>Parser Debug JSON</h3>
+<pre id="hk-parser-debug" class="debug-json"></pre>
+
 <script>
   const form = document.getElementById('hk-mpf-form');
   const status = document.getElementById('hk-parse-status');
   const componentsBody = document.getElementById('components-body');
   const addComponentBtn = document.getElementById('add-component-btn');
+  const parserDebug = document.getElementById('hk-parser-debug');
 
   const createComponentRow = (component = {}) => {
     const row = document.createElement('tr');
@@ -94,6 +98,8 @@
     for (const component of parsed.components || []) {
       componentsBody.appendChild(createComponentRow(component));
     }
+
+    parserDebug.textContent = JSON.stringify(parsed, null, 2);
 
     status.textContent = 'Parse complete.';
   });

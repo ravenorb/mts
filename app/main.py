@@ -836,6 +836,7 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
     if material_match:
         material = f"{material_match.group(1)}ga"
 
+    component_debug = _extract_hk_component_debug(page1)
     components = _parse_hk_components(page1, qty_produced)
 
     return {
@@ -844,58 +845,48 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
         "sheet_size": sheet_size,
         "material": material,
         "components": components,
+        "debug": {
+            "page1_component_lines": component_debug,
+        },
     }
 
 
-def _parse_hk_components(page1_text: str, qty_produced: int) -> list[dict]:
-    """Parse HK component rows from page-1 table.
-
-    Expected source columns on page 1:
-      * `Part #`   -> `component_id`
-      * `#Pcs`     -> `sheet_qty`
-    """
-
-    components: list[dict] = []
-    lines = [line.strip() for line in page1_text.splitlines() if line.strip()]
-
-    header_seen = False
-
-    def _looks_like_header(value: str) -> bool:
-        compact = re.sub(r"\s+", "", value.lower())
-        return "part#" in compact and "#pcs" in compact
-    for line in lines:
-        normalized = " ".join(line.split())
-        lower = normalized.lower()
-
-        if _looks_like_header(normalized):
-            header_seen = True
-            continue
-
-        # Stop scanning once the table appears to end.
-        if header_seen and (lower.startswith("dwg") or lower.startswith("notes")):
+def _extract_hk_component_debug(page1_text: str) -> list[str]:
+    lines = [" ".join(line.split()) for line in page1_text.splitlines() if line.strip()]
+    start_index = 0
+    for i, line in enumerate(lines):
+        compact = re.sub(r"\s+", "", line.lower())
+        if "part#" in compact and "#pcs" in compact:
+            start_index = i + 1
             break
 
-        # Prefer rows after the table header to avoid accidental matches.
-        if not header_seen:
+    end_index = len(lines)
+    for i in range(start_index, len(lines)):
+        lower = lines[i].lower()
+        if "dwg#" in lower or lower.startswith("notes") or "date printed" in lower:
+            end_index = i
+            break
+
+    return lines[start_index:end_index]
+
+
+def _parse_hk_components(page1_text: str, qty_produced: int) -> list[dict]:
+    components: list[dict] = []
+    for line in _extract_hk_component_debug(page1_text):
+        if "FR-" not in line:
             continue
 
-        component_match = re.search(r"\b([A-Z0-9]{1,6}-[A-Z0-9][A-Z0-9\-]*)\b", normalized)
-        if not component_match:
+        # Keep parsing behavior aligned with samples/parse_cutsheets.py.
+        part_match = re.search(r"(FR-[A-Z0-9]+)", line)
+        if not part_match:
             continue
 
-        component_id = component_match.group(1)
+        component_id = part_match.group(1)
+        integers = re.findall(r"(?<!\.)\b\d{1,2}\b(?!\.)", line)
+        if not integers:
+            continue
 
-        # #Pcs is often printed right of Part #, but can appear before in some exports.
-        trailing_segment = normalized[component_match.end() :]
-        trailing_numbers = [int(value) for value in re.findall(r"\b\d+\b", trailing_segment)]
-        if trailing_numbers:
-            sheet_qty = trailing_numbers[0]
-        else:
-            leading_segment = normalized[: component_match.start()]
-            leading_numbers = [int(value) for value in re.findall(r"\b\d+\b", leading_segment)]
-            if not leading_numbers:
-                continue
-            sheet_qty = leading_numbers[-1]
+        sheet_qty = int(integers[-1])
 
         assy_qty = round(sheet_qty / qty_produced, 4) if qty_produced else 0
         components.append(
