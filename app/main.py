@@ -171,6 +171,11 @@ def engineering_nav_context() -> dict:
         "engineering_sections": [
             {"label": "Overview", "href": "/engineering"},
             {"label": "Parts", "href": "/engineering/parts"},
+            {"label": "HK MPFs", "href": "/engineering/hk-mpfs"},
+            {"label": "WJ Gcode", "href": "/engineering/wj-gcode"},
+            {"label": "ABB Modules", "href": "/engineering/abb-modules"},
+            {"label": "PDFs", "href": "/engineering/pdfs"},
+            {"label": "Drawings", "href": "/engineering/drawings"},
         ]
     }
 
@@ -540,10 +545,9 @@ def production_create_pallet(part_revision_id: int = Form(...), quantity: float 
 
 @app.get("/engineering", response_class=HTMLResponse)
 def engineering_dashboard(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    missing_revisions = db.query(models.Part).outerjoin(models.PartRevision, models.PartRevision.part_id == models.Part.id).filter(models.PartRevision.id.is_(None)).order_by(models.Part.created_at.desc()).all()
     open_questions = db.query(models.EngineeringQuestion).filter_by(status="open").order_by(models.EngineeringQuestion.created_at.desc()).limit(30).all()
     latest_files = db.query(models.PartRevisionFile).order_by(models.PartRevisionFile.uploaded_at.desc()).limit(20).all()
-    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "missing_revisions": missing_revisions, "open_questions": open_questions, "latest_files": latest_files, **engineering_nav_context()})
+    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "open_questions": open_questions, "latest_files": latest_files, **engineering_nav_context()})
 
 
 @app.get("/engineering/parts", response_class=HTMLResponse)
@@ -779,7 +783,32 @@ async def engineering_revision_files_save(part_revision_id: int, request: Reques
 
 @app.get("/engineering/add-machine-program", response_class=HTMLResponse)
 def engineering_machine_program_stub(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS})
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, **engineering_nav_context()})
+
+
+@app.get("/engineering/hk-mpfs", response_class=HTMLResponse)
+def engineering_hk_mpfs_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_hk_mpfs.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, **engineering_nav_context()})
+
+
+@app.get("/engineering/wj-gcode", response_class=HTMLResponse)
+def engineering_wj_gcode_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "page_title": "WJ Gcode", "page_message": "WJ Gcode dashboard is coming next.", **engineering_nav_context()})
+
+
+@app.get("/engineering/abb-modules", response_class=HTMLResponse)
+def engineering_abb_modules_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "page_title": "ABB Modules", "page_message": "ABB module dashboard is coming next.", **engineering_nav_context()})
+
+
+@app.get("/engineering/pdfs", response_class=HTMLResponse)
+def engineering_pdfs_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "page_title": "PDFs", "page_message": "PDF dashboard is coming next.", **engineering_nav_context()})
+
+
+@app.get("/engineering/drawings", response_class=HTMLResponse)
+def engineering_drawings_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "page_title": "Drawings", "page_message": "Drawing dashboard is coming next.", **engineering_nav_context()})
 
 
 @app.get("/stations", response_class=HTMLResponse)

@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>HK CUT FILE DASHBOARD</h2>
+
+<table>
+  <tr>
+    <td><input type="file" name="mpf_file" /></td>
+    <td><input type="file" name="pdf_file" /></td>
+    <td><button type="button">Upload &amp; Parse</button></td>
+    <td><button type="button">Upload &amp; Manual</button></td>
+  </tr>
+  <tr>
+    <th>Primary Part ID</th>
+    <th>QTY Produced</th>
+    <th>Sheet Size</th>
+    <th>Material</th>
+  </tr>
+</table>
+
+<div class="hk-components-header">
+  <h3>Components</h3>
+  <a class="action-btn small-link-btn" href="#">Add</a>
+</div>
+
+<table>
+  <tr>
+    <th>Sheet QTY</th>
+    <th>ASSY QTY</th>
+    <th>COMPONENT ID</th>
+    <th>ACTION</th>
+  </tr>
+</table>
+{% endblock %}

@@ -1,25 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Engineering Dashboard</h2>
-<div class="action-row">
-  <a class="action-btn" href="/engineering/parts">Parts</a>
-  <a class="action-btn" href="/entity/parts/new">Create Part</a>
-  <a class="action-btn" href="/entity/part_revisions/new">Create Revision</a>
-  <a class="action-btn" href="/entity/part_revisions">Edit Revision</a>
-  <a class="action-btn" href="/entity/part_revisions">View Part Revision</a>
-  <a class="action-btn secondary" href="/engineering/add-machine-program">Add Machine Program File (TODO)</a>
-</div>
-
-<h3>Queue: Parts with no revision</h3>
-<table>
-  <tr><th>Part ID</th><th>Part Number</th><th>Description</th><th>Action</th></tr>
-  {% for p in missing_revisions %}
-  <tr>
-    <td>{{p.id}}</td><td>{{p.part_number}}</td><td>{{p.description}}</td>
-    <td><a href="/entity/part_revisions/new">Create Revision</a></td>
-  </tr>
-  {% endfor %}
-</table>
 
 <h3>Queue: Open engineering questions from stations</h3>
 <table>
