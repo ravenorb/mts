@@ -2,11 +2,12 @@
 {% block content %}
 <h2>HK CUT FILE DASHBOARD</h2>
 
+<form id="hk-mpf-form">
 <table>
   <tr>
-    <td><input type="file" name="mpf_file" /></td>
-    <td><input type="file" name="pdf_file" /></td>
-    <td><button type="button">Upload &amp; Parse</button></td>
+    <td><input type="file" name="mpf_file" id="mpf-file" required/></td>
+    <td><input type="file" name="pdf_file" id="pdf-file" accept=".pdf" required/></td>
+    <td><button type="submit">Upload &amp; Parse</button></td>
     <td><button type="button">Upload &amp; Manual</button></td>
   </tr>
   <tr>
@@ -15,7 +16,16 @@
     <th>Sheet Size</th>
     <th>Material</th>
   </tr>
+  <tr>
+    <td><input type="text" id="primary-part-id"/></td>
+    <td><input type="number" id="qty-produced" step="1" min="0"/></td>
+    <td><input type="text" id="sheet-size"/></td>
+    <td><input type="text" id="material"/></td>
+  </tr>
 </table>
+</form>
+
+<p id="hk-parse-status"></p>
 
 <div class="hk-components-header">
   <h3>Components</h3>
@@ -29,5 +39,49 @@
     <th>COMPONENT ID</th>
     <th>ACTION</th>
   </tr>
+  <tbody id="components-body"></tbody>
 </table>
+
+<script>
+  const form = document.getElementById('hk-mpf-form');
+  const status = document.getElementById('hk-parse-status');
+  const componentsBody = document.getElementById('components-body');
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    status.textContent = 'Parsing PDF and MPF files...';
+
+    const data = new FormData(form);
+    const response = await fetch('/engineering/hk-mpfs/parse', {
+      method: 'POST',
+      body: data,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      status.textContent = errorData.detail || 'Unable to parse files.';
+      return;
+    }
+
+    const parsed = await response.json();
+    document.getElementById('primary-part-id').value = parsed.primary_part_id || '';
+    document.getElementById('qty-produced').value = parsed.qty_produced || 0;
+    document.getElementById('sheet-size').value = parsed.sheet_size || '';
+    document.getElementById('material').value = parsed.material || '';
+
+    componentsBody.innerHTML = '';
+    for (const component of parsed.components || []) {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${component.sheet_qty ?? ''}</td>
+        <td>${component.assy_qty ?? ''}</td>
+        <td>${component.component_id ?? ''}</td>
+        <td><button type="button">Delete</button></td>
+      `;
+      componentsBody.appendChild(row);
+    }
+
+    status.textContent = 'Parse complete.';
+  });
+</script>
 {% endblock %}
