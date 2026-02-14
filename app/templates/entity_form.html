@@ -28,7 +28,14 @@
           {% endfor %}
         </select>
       {% else %}
-        <input name="{{c.name}}" value="{{ current_val }}" {% if view_only %}disabled{% endif %}/>
+        {% if entity == "employees" and c.name == "password_hash" %}
+          <div class="inline-field-row">
+            <input name="{{c.name}}" value="{{ current_val }}" readonly disabled/>
+            {% if item and not view_only %}<a href="#" id="changePasswordLink">Change</a>{% endif %}
+          </div>
+        {% else %}
+          <input name="{{c.name}}" value="{{ current_val }}" {% if view_only %}disabled{% endif %}/>
+        {% endif %}
       {% endif %}
 
       <div class="field-help">Expected: {{ meta.expected }}</div>
@@ -46,4 +53,43 @@
       <a class="action-btn secondary" href="/entity/consumable_usage_logs">Review Consumable Log</a>
     </div>
   {% endif %}
+
+{% if entity == "employees" and item and not view_only %}
+<div id="passwordModal" class="modal" style="display:none;">
+  <div class="modal-content">
+    <h3>Change Password</h3>
+    <form method="post" action="/entity/employees/{{item.id}}/password">
+      <label>New Password</label>
+      <input type="password" name="new_password" required minlength="8" />
+      <label>Confirm New Password</label>
+      <input type="password" name="confirm_password" required minlength="8" />
+      <div class="action-row">
+        <button type="submit">Save Password</button>
+        <button type="button" id="cancelPasswordModal">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+  const link = document.getElementById('changePasswordLink');
+  const modal = document.getElementById('passwordModal');
+  const cancelBtn = document.getElementById('cancelPasswordModal');
+  if (link && modal) {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      modal.style.display = 'block';
+    });
+  }
+  if (cancelBtn && modal) {
+    cancelBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  }
+  window.addEventListener('click', (event) => {
+    if (event.target === modal) {
+      modal.style.display = 'none';
+    }
+  });
+</script>
+{% endif %}
 {% endblock %}

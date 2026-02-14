@@ -116,19 +116,17 @@ MODEL_MAP = {
     "employees": models.Employee,
     "skills": models.Skill,
     "employee_skills": models.EmployeeSkill,
-    "users": models.User,
 }
 
 ROLE_WRITE = {
     "operator": {"pallets", "pallet_parts", "pallet_events", "queues"},
     "maintenance": {"maintenance_requests", "station_maintenance_tasks", "pallet_events"},
     "purchasing": {"consumables", "purchase_requests", "purchase_request_lines", "consumable_usage_logs"},
-    "planner": set(MODEL_MAP.keys()) - {"users"},
+    "planner": set(MODEL_MAP.keys()),
     "admin": set(MODEL_MAP.keys()),
 }
 
 FIELD_CHOICES = {
-    ("users", "role"): ["operator", "maintenance", "purchasing", "planner", "admin"],
     ("employees", "role"): ["operator", "maintenance", "purchasing", "planner", "admin"],
     ("part_revisions", "is_current"): ["true", "false"],
     ("cut_sheet_revisions", "is_current"): ["true", "false"],
@@ -161,7 +159,7 @@ ENTITY_GROUPS = {
     "Engineering": ["parts", "part_revisions", "part_revision_files", "engineering_questions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
     "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
     "Inventory": ["storage_locations", "raw_materials", "consumables", "parts", "delivered_part_lots", "scrap_steel"],
-    "People": ["employees", "skills", "employee_skills", "users"],
+    "People": ["employees", "skills", "employee_skills"],
 }
 
 MAINTENANCE_ACTIVE_STATUSES = ["submitted", "reviewed", "scheduled", "waiting on parts"]
@@ -300,8 +298,78 @@ def parse_field_value(entity: str, col, raw_value):
 
 
 def create_default_admin(db: Session):
-    if not db.query(models.User).filter_by(username="admin").first():
-        db.add(models.User(username="admin", password_hash=hash_password("admin123"), role="admin"))
+    if not db.query(models.Employee).filter_by(username="admin").first():
+        db.add(models.Employee(
+            employee_code="ADMIN",
+            full_name="Administrator",
+            phone_number="",
+            email_address="admin@local",
+            username="admin",
+            password_hash=hash_password("admin123"),
+            role="admin",
+            active=True,
+        ))
+        db.commit()
+
+
+def ensure_employee_auth_schema(db: Session):
+    employee_columns = {row[1] for row in db.execute(text("PRAGMA table_info(employees)"))}
+    if "username" not in employee_columns:
+        db.execute(text("ALTER TABLE employees ADD COLUMN username VARCHAR(64)"))
+    if "password_hash" not in employee_columns:
+        db.execute(text("ALTER TABLE employees ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
+    db.commit()
+
+
+def migrate_users_to_employees(db: Session):
+    users = db.query(models.User).all()
+    if not users:
+        return
+
+    touched = False
+    for account in users:
+        employee = None
+        if account.username:
+            employee = db.query(models.Employee).filter_by(username=account.username).first()
+        if not employee:
+            employee = db.query(models.Employee).filter_by(user_id=account.id).first()
+
+        if employee:
+            if not employee.username:
+                employee.username = account.username
+                touched = True
+            if not employee.password_hash:
+                employee.password_hash = account.password_hash
+                touched = True
+            if account.role and employee.role != account.role:
+                employee.role = account.role
+                touched = True
+            if employee.active != account.active:
+                employee.active = account.active
+                touched = True
+            continue
+
+        employee_code = f"EMP{account.id:04d}"
+        if db.query(models.Employee).filter_by(employee_code=employee_code).first():
+            employee_code = f"EMP{int(datetime.utcnow().timestamp())}{account.id}"
+        email = f"{account.username}@local"
+        if db.query(models.Employee).filter_by(email_address=email).first():
+            email = f"{account.username}-{account.id}@local"
+
+        db.add(models.Employee(
+            employee_code=employee_code,
+            full_name=account.username,
+            phone_number="",
+            email_address=email,
+            username=account.username,
+            password_hash=account.password_hash,
+            user_id=account.id,
+            role=account.role,
+            active=account.active,
+        ))
+        touched = True
+
+    if touched:
         db.commit()
 
 
@@ -355,7 +423,7 @@ def get_current_user(request: Request, db: Session):
     uid = request.session.get("uid")
     if not uid:
         return None
-    return db.query(models.User).filter_by(id=uid, active=True).first()
+    return db.query(models.Employee).filter_by(id=uid, active=True).first()
 
 
 def require_login(request: Request, db: Session = Depends(get_db)):
@@ -380,6 +448,8 @@ def startup():
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
     ensure_station_schema(db)
+    ensure_employee_auth_schema(db)
+    migrate_users_to_employees(db)
     create_default_admin(db)
     ensure_default_stations(db)
 
@@ -593,7 +663,7 @@ def stations_login_submit(station_id: int, request: Request, station_user_id: st
     station = db.query(models.Station).filter_by(id=station_id, active=True).first()
     if not station:
         raise HTTPException(404)
-    account = db.query(models.User).filter_by(username=station_user_id.strip(), active=True).first()
+    account = db.query(models.Employee).filter_by(username=station_user_id.strip(), active=True).first()
     if account and verify_password(station_password, account.password_hash):
         request.session[f"station_auth_{station_id}"] = station_user_id.strip()
         return RedirectResponse(f"/stations/{station_id}", status_code=302)
@@ -1222,7 +1292,7 @@ def login_page(request: Request):
 
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(models.User).filter_by(username=username, active=True).first()
+    user = db.query(models.Employee).filter_by(username=username, active=True).first()
     if not user or not verify_password(password, user.password_hash):
         return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid credentials"})
     request.session["uid"] = user.id
@@ -1246,17 +1316,15 @@ def entity_list(entity: str, request: Request, db: Session = Depends(get_db), us
 
 
 @app.get("/admin", response_class=HTMLResponse)
-def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(get_db), user=Depends(require_admin)):
-    tab = tab if tab in {"users", "stations", "skills", "employees", "server-maintenance"} else "users"
+def admin_dashboard(request: Request, tab: str = "employees", db: Session = Depends(get_db), user=Depends(require_admin)):
+    tab = tab if tab in {"stations", "skills", "employees", "server-maintenance"} else "employees"
     admin_tab_titles = {
-        "users": "Users",
         "stations": "Stations",
         "skills": "Skills",
         "employees": "Employees",
         "server-maintenance": "Server Maintenance",
     }
     tab_data = {
-        "users": db.query(models.User).order_by(models.User.id.desc()).limit(200).all(),
         "stations": db.query(models.Station).order_by(models.Station.id.desc()).limit(200).all(),
         "skills": db.query(models.Skill).order_by(models.Skill.id.desc()).limit(200).all(),
         "employees": db.query(models.Employee).order_by(models.Employee.id.desc()).limit(200).all(),
@@ -1264,7 +1332,7 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
 
     branches, active_branch = list_branches()
 
-    admin_cols = {k: [c.name for c in MODEL_MAP[k].__table__.columns] for k in ["users", "stations", "skills", "employees"]}
+    admin_cols = {k: [c.name for c in MODEL_MAP[k].__table__.columns] for k in ["stations", "skills", "employees"]}
 
     return templates.TemplateResponse("admin_dashboard.html", {
         "request": request,
@@ -1290,7 +1358,7 @@ def admin_dashboard(request: Request, tab: str = "users", db: Session = Depends(
 
 @app.get("/admin/{entity}/{item_id}/view", response_class=HTMLResponse)
 def admin_entity_view(entity: str, item_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
-    if entity not in {"employees", "stations", "skills", "users"}:
+    if entity not in {"employees", "stations", "skills"}:
         raise HTTPException(404)
     model = MODEL_MAP.get(entity)
     item = db.query(model).filter_by(id=item_id).first()
@@ -1358,6 +1426,26 @@ async def server_maintenance(request: Request, db: Session = Depends(get_db), us
         message = f"Data paths saved to {SETTINGS_PATH}. Restart app to apply DB path changes." if persisted else "Failed to persist settings to disk."
 
     return RedirectResponse(f"/admin?tab=server-maintenance&message={message}", status_code=302)
+
+
+@app.post("/entity/employees/{item_id}/password")
+async def employee_change_password(item_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
+    form = await request.form()
+    new_password = (form.get("new_password") or "").strip()
+    confirm_password = (form.get("confirm_password") or "").strip()
+
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if new_password != confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    employee = db.query(models.Employee).filter_by(id=item_id).first()
+    if not employee:
+        raise HTTPException(404)
+
+    employee.password_hash = hash_password(new_password)
+    db.commit()
+    return RedirectResponse(f"/entity/employees/{item_id}/edit", status_code=302)
 
 
 @app.get("/entity/{entity}/new", response_class=HTMLResponse)

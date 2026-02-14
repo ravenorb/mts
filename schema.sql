@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS employees (
   full_name TEXT,
   phone_number TEXT,
   email_address TEXT UNIQUE,
+  username TEXT UNIQUE,
+  password_hash TEXT,
   start_date TIMESTAMP,
   user_id INTEGER UNIQUE REFERENCES users(id),
   role TEXT,
