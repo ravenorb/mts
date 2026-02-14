@@ -859,11 +859,15 @@ def _parse_hk_components(page1_text: str, qty_produced: int) -> list[dict]:
     lines = [line.strip() for line in page1_text.splitlines() if line.strip()]
 
     header_seen = False
+
+    def _looks_like_header(value: str) -> bool:
+        compact = re.sub(r"\s+", "", value.lower())
+        return "part#" in compact and "#pcs" in compact
     for line in lines:
         normalized = " ".join(line.split())
         lower = normalized.lower()
 
-        if "part #" in lower and ("#pcs" in lower or "# pcs" in lower):
+        if _looks_like_header(normalized):
             header_seen = True
             continue
 
@@ -875,7 +879,7 @@ def _parse_hk_components(page1_text: str, qty_produced: int) -> list[dict]:
         if not header_seen:
             continue
 
-        component_match = re.search(r"\b([A-Z]{1,4}-[A-Z0-9\-]+)\b", normalized)
+        component_match = re.search(r"\b([A-Z0-9]{1,6}-[A-Z0-9][A-Z0-9\-]*)\b", normalized)
         if not component_match:
             continue
 
