@@ -576,7 +576,7 @@ def engineering_parts_create(part_id: str = Form(...), description: str = Form("
         raise HTTPException(422, "part_id already exists")
     db.add(models.PartMaster(part_id=clean_part_id, description=description.strip(), cur_rev=0))
     db.commit()
-    return RedirectResponse("/engineering/parts", status_code=302)
+    return RedirectResponse(f"/engineering/parts/{clean_part_id}?mode=edit", status_code=302)
 
 
 @app.get("/engineering/parts/{part_id}", response_class=HTMLResponse)
@@ -630,23 +630,24 @@ def engineering_part_add_bom_line(part_id: str, rev_id: int = Form(...), comp_id
 
 
 @app.post("/engineering/parts/{part_id}/revision-header")
-def engineering_part_upsert_revision_header(
+async def engineering_part_upsert_revision_header(
     part_id: str,
     rev_id: int = Form(...),
-    hk_file: str = Form(""),
     hk_qty: float = Form(0),
-    wj_file: str = Form(""),
     wj_qty: float = Form(0),
-    cut_pdf: str = Form(""),
-    cut_dwg: str = Form(""),
-    fab_pdf: str = Form(""),
-    fab_dwg: str = Form(""),
-    weld_pdf: str = Form(""),
-    weld_dwg: str = Form(""),
-    weld_mod: str = Form(""),
     released_date: str = Form(""),
     released_by: str = Form(""),
     release_comment: str = Form(""),
+    hk_pdf_upload: UploadFile | None = File(None),
+    wj_pdf_upload: UploadFile | None = File(None),
+    brake_pdf_upload: UploadFile | None = File(None),
+    weld_pdf_upload: UploadFile | None = File(None),
+    hk_machine_upload: UploadFile | None = File(None),
+    wj_machine_upload: UploadFile | None = File(None),
+    brake_machine_upload: UploadFile | None = File(None),
+    weld_machine_upload: UploadFile | None = File(None),
+    brake_dwg_upload: UploadFile | None = File(None),
+    weld_dwg_upload: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     user=Depends(require_login),
 ):
@@ -659,21 +660,64 @@ def engineering_part_upsert_revision_header(
         header = models.RevisionHeader(part_id=part_id, rev_id=max(rev_id, 0))
         db.add(header)
 
-    header.hk_file = hk_file.strip()
+    async def maybe_store_upload(upload: UploadFile | None) -> str | None:
+        if not upload or not upload.filename:
+            return None
+        safe_name = Path(upload.filename).name
+        stored_name = f"pm_{part_id}_r{max(rev_id, 0)}_{int(datetime.utcnow().timestamp())}_{safe_name}"
+        out_path = PART_FILE_DIR / stored_name
+        data = await upload.read()
+        out_path.write_bytes(data)
+        return str(out_path)
+
+    hk_pdf_path = await maybe_store_upload(hk_pdf_upload)
+    wj_pdf_path = await maybe_store_upload(wj_pdf_upload)
+    brake_pdf_path = await maybe_store_upload(brake_pdf_upload)
+    weld_pdf_path = await maybe_store_upload(weld_pdf_upload)
+    hk_machine_path = await maybe_store_upload(hk_machine_upload)
+    wj_machine_path = await maybe_store_upload(wj_machine_upload)
+    brake_machine_path = await maybe_store_upload(brake_machine_upload)
+    weld_machine_path = await maybe_store_upload(weld_machine_upload)
+    brake_dwg_path = await maybe_store_upload(brake_dwg_upload)
+    weld_dwg_path = await maybe_store_upload(weld_dwg_upload)
+
+    if hk_pdf_path:
+        header.hk_file = hk_pdf_path
     header.hk_qty = hk_qty
-    header.wj_file = wj_file.strip()
+    if wj_pdf_path:
+        header.wj_file = wj_pdf_path
     header.wj_qty = wj_qty
-    header.cut_pdf = cut_pdf.strip()
-    header.cut_dwg = cut_dwg.strip()
-    header.fab_pdf = fab_pdf.strip()
-    header.fab_dwg = fab_dwg.strip()
-    header.weld_pdf = weld_pdf.strip()
-    header.weld_dwg = weld_dwg.strip()
-    header.weld_mod = weld_mod.strip()
+    if brake_pdf_path:
+        header.cut_pdf = brake_pdf_path
+    if weld_pdf_path:
+        header.weld_pdf = weld_pdf_path
+    if hk_machine_path:
+        header.cut_dwg = hk_machine_path
+    if wj_machine_path:
+        header.fab_pdf = wj_machine_path
+    if brake_machine_path:
+        header.fab_dwg = brake_machine_path
+    if weld_machine_path:
+        header.weld_dwg = weld_machine_path
+
+    dwg_payload = {}
+    try:
+        if header.weld_mod.strip().startswith("{"):
+            dwg_payload = json.loads(header.weld_mod)
+            if not isinstance(dwg_payload, dict):
+                dwg_payload = {}
+    except json.JSONDecodeError:
+        dwg_payload = {}
+    if brake_dwg_path:
+        dwg_payload["brake_dwg"] = brake_dwg_path
+    if weld_dwg_path:
+        dwg_payload["weld_dwg"] = weld_dwg_path
+    header.weld_mod = json.dumps(dwg_payload) if dwg_payload else header.weld_mod
+
     header.released_by = released_by.strip()
     header.release_comment = release_comment.strip()
     if released_date.strip():
-        header.released_date = datetime.fromisoformat(released_date.strip())
+        header.released_date = datetime.fromisoformat(f"{released_date.strip()}T00:00:00")
     else:
         header.released_date = None
     db.commit()

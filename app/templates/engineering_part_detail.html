@@ -4,69 +4,116 @@
   <div>
     <a class="action-btn" href="/engineering/parts">Back to Parts</a>
   </div>
-  <div>
-    <strong>Part:</strong> {{ part.part_id }} | <strong>Current Rev:</strong> {{ part.cur_rev }}
-  </div>
 </div>
 
-<form class="panel-form" method="post" action="/engineering/parts/{{ part.part_id }}/update">
-  <h3>Part Master</h3>
-  <div class="form-field"><label>Part ID</label><input value="{{ part.part_id }}" disabled /></div>
-  <div class="form-field"><label>Description</label><input name="description" value="{{ part.description }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>cur_rev</label><input type="number" min="0" name="cur_rev" value="{{ part.cur_rev }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  {% if mode == 'edit' %}<button type="submit">Update Part</button>{% endif %}
-</form>
-
-<form class="panel-form" method="get" action="/engineering/parts/{{ part.part_id }}">
-  <input type="hidden" name="mode" value="{{ mode }}" />
-  <div class="form-field">
-    <label>Revision</label>
-    <select name="rev_id" onchange="this.form.submit()">
-      {% set revisions = revision_list if revision_list else [selected_rev] %}
-      {% for rev in revisions %}
-      <option value="{{ rev }}" {% if rev == selected_rev %}selected{% endif %}>{{ rev }}</option>
-      {% endfor %}
-    </select>
+<form class="part-master-header" method="post" action="/engineering/parts/{{ part.part_id }}/update">
+  <div class="part-master-fields">
+    <div class="part-master-cell part-id-cell">
+      <label>Part ID</label>
+      <input value="{{ part.part_id }}" disabled />
+    </div>
+    <div class="part-master-cell part-desc-cell">
+      <label>Description</label>
+      <input name="description" value="{{ part.description }}" {% if mode != 'edit' %}disabled{% endif %}/>
+    </div>
+    <div class="part-master-cell part-rev-cell">
+      <label>Revision</label>
+      <input type="number" min="0" name="cur_rev" value="{{ part.cur_rev }}" {% if mode != 'edit' %}disabled{% endif %}/>
+    </div>
   </div>
+  {% if mode == 'edit' %}<button class="header-save-link" type="submit">Save</button>{% endif %}
 </form>
 
-<div class="page-toolbar">
-  <h3>Revision BOM (part_id={{ part.part_id }}, rev_id={{ selected_rev }})</h3>
+<div class="bom-block">
+  <div class="bom-controls">
+    <form method="get" action="/engineering/parts/{{ part.part_id }}">
+      <input type="hidden" name="mode" value="{{ mode }}" />
+      <select name="rev_id" onchange="this.form.submit()">
+        {% set revisions = revision_list if revision_list else [selected_rev] %}
+        {% for rev in revisions %}
+        <option value="{{ rev }}" {% if rev == selected_rev %}selected{% endif %}>Revision {{ rev }}</option>
+        {% endfor %}
+      </select>
+    </form>
+    {% if mode == 'edit' %}
+    <button type="button" class="small-link-btn" onclick="document.getElementById('add-bom-dialog').showModal()">Add</button>
+    {% endif %}
+  </div>
+
+  <table>
+    <tr><th class="small-col">Line #</th><th>Component</th><th class="small-col">Qty</th></tr>
+    {% for line in bom_lines %}
+    <tr><td>{{ line.id }}</td><td>{{ line.comp_id }}</td><td>{{ line.comp_qty }}</td></tr>
+    {% endfor %}
+  </table>
 </div>
-<table>
-  <tr><th>Line ID</th><th>Component ID</th><th>Component Qty</th></tr>
-  {% for line in bom_lines %}
-  <tr><td>{{ line.id }}</td><td>{{ line.comp_id }}</td><td>{{ line.comp_qty }}</td></tr>
-  {% endfor %}
-</table>
 
 {% if mode == 'edit' %}
-<form class="panel-form" method="post" action="/engineering/parts/{{ part.part_id }}/bom-lines">
-  <h4>Add BOM Line</h4>
-  <input type="hidden" name="rev_id" value="{{ selected_rev }}" />
-  <div class="form-field"><label>comp_id</label><input name="comp_id" required /></div>
-  <div class="form-field"><label>comp_qty</label><input type="number" step="0.001" name="comp_qty" required /></div>
-  <button type="submit">Add Line</button>
-</form>
+<dialog id="add-bom-dialog" class="modal-dialog">
+  <form class="panel-form" method="post" action="/engineering/parts/{{ part.part_id }}/bom-lines">
+    <h4>Add Component</h4>
+    <input type="hidden" name="rev_id" value="{{ selected_rev }}" />
+    <div class="form-field"><label>Component</label><input name="comp_id" required /></div>
+    <div class="form-field"><label>Qty</label><input type="number" step="0.001" name="comp_qty" required /></div>
+    <div class="action-row">
+      <button type="submit">Add</button>
+      <button type="button" onclick="document.getElementById('add-bom-dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
 {% endif %}
 
-<form class="panel-form" method="post" action="/engineering/parts/{{ part.part_id }}/revision-header">
-  <h3>Revision Header</h3>
+<form class="panel-form revision-header-form" method="post" enctype="multipart/form-data" action="/engineering/parts/{{ part.part_id }}/revision-header">
+  <h3>Revision Header Data</h3>
   <input type="hidden" name="rev_id" value="{{ selected_rev }}" />
-  <div class="form-field"><label>hk_file</label><input name="hk_file" value="{{ revision_header.hk_file if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>hk_qty</label><input type="number" step="0.001" name="hk_qty" value="{{ revision_header.hk_qty if revision_header else 0 }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>wj_file</label><input name="wj_file" value="{{ revision_header.wj_file if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>wj_qty</label><input type="number" step="0.001" name="wj_qty" value="{{ revision_header.wj_qty if revision_header else 0 }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>cut_pdf</label><input name="cut_pdf" value="{{ revision_header.cut_pdf if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>cut_dwg</label><input name="cut_dwg" value="{{ revision_header.cut_dwg if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>fab_pdf</label><input name="fab_pdf" value="{{ revision_header.fab_pdf if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>fab_dwg</label><input name="fab_dwg" value="{{ revision_header.fab_dwg if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>weld_pdf</label><input name="weld_pdf" value="{{ revision_header.weld_pdf if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>weld_dwg</label><input name="weld_dwg" value="{{ revision_header.weld_dwg if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>weld_mod</label><input name="weld_mod" value="{{ revision_header.weld_mod if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>released_date</label><input type="datetime-local" name="released_date" value="{{ revision_header.released_date.strftime('%Y-%m-%dT%H:%M:%S') if revision_header and revision_header.released_date else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>released_by</label><input name="released_by" value="{{ revision_header.released_by if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></div>
-  <div class="form-field"><label>release_comment</label><textarea name="release_comment" {% if mode != 'edit' %}disabled{% endif %}>{{ revision_header.release_comment if revision_header else '' }}</textarea></div>
-  {% if mode == 'edit' %}<button type="submit">Save Revision Header</button>{% endif %}
+  <table>
+    <tr>
+      <th></th>
+      <th>HK LASER</th>
+      <th>OMAX WJ</th>
+      <th>BRAKE PRESS</th>
+      <th>WELDING</th>
+    </tr>
+    <tr>
+      <td>PDF File</td>
+      <td><input type="file" name="hk_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="wj_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="brake_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="weld_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+    </tr>
+    <tr>
+      <td>Machine File</td>
+      <td><input type="file" name="hk_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="wj_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="brake_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="weld_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+    </tr>
+    <tr>
+      <td>Qty/DWG</td>
+      <td><input type="number" step="0.001" name="hk_qty" value="{{ revision_header.hk_qty if revision_header else 0 }}" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="number" step="0.001" name="wj_qty" value="{{ revision_header.wj_qty if revision_header else 0 }}" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="brake_dwg_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="file" name="weld_dwg_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
+    </tr>
+  </table>
+
+  <table>
+    <tr>
+      <th style="width:70%">Released By</th>
+      <th style="width:30%">Release Date</th>
+    </tr>
+    <tr>
+      <td><input name="released_by" value="{{ revision_header.released_by if revision_header else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></td>
+      <td><input type="date" name="released_date" value="{{ revision_header.released_date.strftime('%Y-%m-%d') if revision_header and revision_header.released_date else '' }}" {% if mode != 'edit' %}disabled{% endif %}/></td>
+    </tr>
+    <tr>
+      <th colspan="2">Release Notes</th>
+    </tr>
+    <tr>
+      <td colspan="2"><textarea name="release_comment" {% if mode != 'edit' %}disabled{% endif %}>{{ revision_header.release_comment if revision_header else '' }}</textarea></td>
+    </tr>
+  </table>
+
+  {% if mode == 'edit' %}<button type="submit">Save</button>{% endif %}
 </form>
 {% endblock %}
