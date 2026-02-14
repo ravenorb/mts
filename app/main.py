@@ -800,11 +800,14 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
         raise HTTPException(status_code=500, detail="PDF parser dependency is not installed.") from exc
 
     text_pages: list[str] = []
+    layout_pages: list[str] = []
     reader = PdfReader(BytesIO(pdf_bytes))
     for page in reader.pages:
         text_pages.append(page.extract_text() or "")
+        layout_pages.append(page.extract_text(extraction_mode="layout") or "")
 
     page1 = text_pages[0] if text_pages else ""
+    layout_page1 = layout_pages[0] if layout_pages else ""
     page2 = text_pages[1] if len(text_pages) > 1 else ""
     all_text = "\n".join(text_pages)
 
@@ -837,7 +840,8 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
         material = f"{material_match.group(1)}ga"
 
     component_debug = _extract_hk_component_debug(page1)
-    components = _parse_hk_components(page1, qty_produced)
+    layout_component_debug = _extract_hk_component_debug(layout_page1)
+    components = _parse_hk_components([page1, layout_page1], qty_produced)
 
     return {
         "primary_part_id": primary_part_id,
@@ -847,6 +851,7 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
         "components": components,
         "debug": {
             "page1_component_lines": component_debug,
+            "layout_page1_component_lines": layout_component_debug,
         },
     }
 
@@ -870,34 +875,79 @@ def _extract_hk_component_debug(page1_text: str) -> list[str]:
     return lines[start_index:end_index]
 
 
-def _parse_hk_components(page1_text: str, qty_produced: int) -> list[dict]:
-    components: list[dict] = []
-    for line in _extract_hk_component_debug(page1_text):
-        if "FR-" not in line:
+def _parse_hk_component_line(text: str) -> tuple[str, int | None] | None:
+    if "FR-" not in text:
+        return None
+
+    match = re.search(r"(FR-[A-Z0-9]+)", text)
+    if not match:
+        return None
+
+    component_id = match.group(1)
+    sheet_qty: int | None = None
+
+    start_match = re.match(r"^(FR-[A-Z0-9]*[A-Z]+)(\d{1,2})\b", text)
+    if start_match and re.search(r"\d+\.\d+", text):
+        component_id = start_match.group(1)
+        sheet_qty = int(start_match.group(2))
+
+    if sheet_qty is None and component_id[-1].isalpha():
+        appended_match = re.search(re.escape(component_id) + r"(\d{1,2})\b", text)
+        if appended_match:
+            sheet_qty = int(appended_match.group(1))
+
+    if sheet_qty is None:
+        integers = re.findall(r"(?<!\.)\b\d{1,2}\b(?!\.)", text)
+        if integers:
+            sheet_qty = int(integers[-1])
+
+    return component_id, sheet_qty
+
+
+def _parse_hk_components(page_texts: list[str], qty_produced: int) -> list[dict]:
+    seen: dict[str, dict] = {}
+
+    candidate_lines: list[str] = []
+    for text in page_texts:
+        if text:
+            candidate_lines.extend(_extract_hk_component_debug(text))
+
+    parsed_with_qty = [
+        _parse_hk_component_line(" ".join(line.split())) for line in candidate_lines
+    ]
+    parsed_with_qty = [parsed for parsed in parsed_with_qty if parsed and parsed[1] is not None]
+
+    if not parsed_with_qty:
+        for text in page_texts:
+            if not text:
+                continue
+            fr_separated = text.replace("FR-", "\nFR-")
+            fallback_lines = [
+                line.strip()
+                for line in fr_separated.splitlines()
+                if line.strip().startswith("FR-")
+            ]
+            parsed_with_qty.extend(
+                parsed
+                for parsed in (
+                    _parse_hk_component_line(" ".join(line.split()))
+                    for line in fallback_lines
+                )
+                if parsed and parsed[1] is not None
+            )
+
+    for component_id, sheet_qty in parsed_with_qty:
+        existing = seen.get(component_id)
+        if existing and existing["sheet_qty"] >= sheet_qty:
             continue
 
-        # Keep parsing behavior aligned with samples/parse_cutsheets.py.
-        part_match = re.search(r"(FR-[A-Z0-9]+)", line)
-        if not part_match:
-            continue
+        seen[component_id] = {
+            "sheet_qty": sheet_qty,
+            "assy_qty": round(sheet_qty / qty_produced, 4) if qty_produced else 0,
+            "component_id": component_id,
+        }
 
-        component_id = part_match.group(1)
-        integers = re.findall(r"(?<!\.)\b\d{1,2}\b(?!\.)", line)
-        if not integers:
-            continue
-
-        sheet_qty = int(integers[-1])
-
-        assy_qty = round(sheet_qty / qty_produced, 4) if qty_produced else 0
-        components.append(
-            {
-                "sheet_qty": sheet_qty,
-                "assy_qty": assy_qty,
-                "component_id": component_id,
-            }
-        )
-
-    return components
+    return list(seen.values())
 
 
 @app.post("/engineering/hk-mpfs/parse")
