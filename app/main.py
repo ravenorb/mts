@@ -879,25 +879,39 @@ def _parse_hk_component_line(text: str) -> tuple[str, int | None] | None:
     if "FR-" not in text:
         return None
 
-    match = re.search(r"(FR-[A-Z0-9]+)", text)
+    row_prefix_match = re.match(r"^\s*\d{1,3}\b\s+", text)
+    text_without_row = text[row_prefix_match.end():] if row_prefix_match else text
+
+    match = re.search(r"(FR-[A-Z0-9]+)", text_without_row)
     if not match:
         return None
 
-    component_id = match.group(1)
+    component_token = match.group(1)
+    component_id = component_token
     sheet_qty: int | None = None
 
-    start_match = re.match(r"^(FR-[A-Z0-9]*[A-Z]+)(\d{1,2})\b", text)
+    token_suffix_match = re.match(r"^(FR-(?:\d{5}[A-Z]?))(\d{1,2})$", component_token)
+    if token_suffix_match:
+        component_id = token_suffix_match.group(1)
+        sheet_qty = int(token_suffix_match.group(2))
+
+    start_match = re.match(r"^(FR-[A-Z0-9]*[A-Z]+)(\d{1,2})\b", text_without_row)
     if start_match and re.search(r"\d+\.\d+", text):
         component_id = start_match.group(1)
         sheet_qty = int(start_match.group(2))
 
     if sheet_qty is None and component_id[-1].isalpha():
-        appended_match = re.search(re.escape(component_id) + r"(\d{1,2})\b", text)
+        appended_match = re.search(re.escape(component_id) + r"(\d{1,2})\b", text_without_row)
         if appended_match:
             sheet_qty = int(appended_match.group(1))
 
     if sheet_qty is None:
-        integers = re.findall(r"(?<!\.)\b\d{1,2}\b(?!\.)", text)
+        trailing_match = re.search(r"(?<!\.)(\d{1,2})\s*$", text_without_row)
+        if trailing_match:
+            sheet_qty = int(trailing_match.group(1))
+
+    if sheet_qty is None:
+        integers = re.findall(r"(?<!\.)\b\d{1,2}\b(?!\.)", text_without_row)
         if integers:
             sheet_qty = int(integers[-1])
 
