@@ -92,3 +92,6 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .revision-header-form{max-width:100%}
 .revision-header-form table{margin-bottom:12px}
 .revision-header-form input[type="file"]{padding:4px}
+
+.hk-components-header{display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px}
+.hk-components-header h3{margin:0}
