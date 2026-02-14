@@ -1,10 +1,11 @@
 import json
 import os
+import re
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func, text
@@ -789,6 +790,78 @@ def engineering_machine_program_stub(request: Request, db: Session = Depends(get
 @app.get("/engineering/hk-mpfs", response_class=HTMLResponse)
 def engineering_hk_mpfs_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     return templates.TemplateResponse("engineering_hk_mpfs.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, **engineering_nav_context()})
+
+
+def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
+    try:
+        from io import BytesIO
+        from pypdf import PdfReader
+    except Exception as exc:  # pragma: no cover - surfaced to UI
+        raise HTTPException(status_code=500, detail="PDF parser dependency is not installed.") from exc
+
+    text_pages: list[str] = []
+    reader = PdfReader(BytesIO(pdf_bytes))
+    for page in reader.pages:
+        text_pages.append(page.extract_text() or "")
+
+    page1 = text_pages[0] if text_pages else ""
+    page2 = text_pages[1] if len(text_pages) > 1 else ""
+    all_text = "\n".join(text_pages)
+
+    primary_part_id = ""
+    dwg_match = re.search(r"DWG\s*#\s*[:\-]?\s*([A-Z0-9\-_.]+)", page2, re.IGNORECASE)
+    if dwg_match:
+        primary_part_id = dwg_match.group(1).strip()
+
+    qty_produced = 0
+    makes_match = re.search(r"make(?:s)?\s+(\d+)\s+frames?", all_text, re.IGNORECASE)
+    if makes_match:
+        qty_produced = int(makes_match.group(1))
+
+    sheet_size = ""
+    size_match = re.search(r"Material\s+size\s*[:\-]?\s*([0-9.]+\s*[xX]\s*[0-9.]+)", all_text, re.IGNORECASE)
+    if size_match:
+        sheet_size = size_match.group(1).replace("X", "x").strip()
+
+    material = ""
+    material_match = re.search(r"\b(10|12|16)\s*ga\b", all_text, re.IGNORECASE)
+    if material_match:
+        material = f"{material_match.group(1)}ga"
+
+    components: list[dict] = []
+    lines = [line.strip() for line in page1.splitlines() if line.strip()]
+    for line in lines:
+        row_match = re.search(r"\b(?P<sheet_qty>\d+)\b.*?\b(?P<component>[A-Z]{1,4}-[A-Z0-9\-]+)\b", line)
+        if not row_match:
+            continue
+        sheet_qty = int(row_match.group("sheet_qty"))
+        component_id = row_match.group("component")
+        assy_qty = round(sheet_qty / qty_produced, 4) if qty_produced else 0
+        components.append({
+            "sheet_qty": sheet_qty,
+            "assy_qty": assy_qty,
+            "component_id": component_id,
+        })
+
+    return {
+        "primary_part_id": primary_part_id,
+        "qty_produced": qty_produced,
+        "sheet_size": sheet_size,
+        "material": material,
+        "components": components,
+    }
+
+
+@app.post("/engineering/hk-mpfs/parse")
+async def engineering_hk_mpf_parse(mpf_file: UploadFile = File(...), pdf_file: UploadFile = File(...), user=Depends(require_login)):
+    if not mpf_file.filename:
+        raise HTTPException(status_code=400, detail="MPF file is required.")
+    if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF file is required.")
+
+    pdf_bytes = await pdf_file.read()
+    parsed = parse_hk_cutsheet(pdf_bytes)
+    return JSONResponse(parsed)
 
 
 @app.get("/engineering/wj-gcode", response_class=HTMLResponse)
