@@ -67,16 +67,6 @@
   {% endif %}
   {% endif %}
 </header>
-{% if user and entity_groups %}
-<aside class="side-nav">
-  {% for group, entries in entity_groups.items() %}
-    <h4>{{group}}</h4>
-    {% for e in entries %}
-      <a href="/entity/{{e}}">{{e}}</a>
-    {% endfor %}
-  {% endfor %}
-</aside>
-{% endif %}
 <main class="main-content">{% block content %}{% endblock %}</main>
 </body>
 </html>
