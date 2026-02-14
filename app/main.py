@@ -819,29 +819,24 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
         qty_produced = int(makes_match.group(1))
 
     sheet_size = ""
-    size_match = re.search(r"Material\s+size\s*[:\-]?\s*([0-9.]+\s*[xX]\s*[0-9.]+)", all_text, re.IGNORECASE)
-    if size_match:
-        sheet_size = size_match.group(1).replace("X", "x").strip()
+    sheet_size_patterns = [
+        r"Material\s+size\s*[:\-]?\s*([0-9.]+\s*[xX]\s*[0-9.]+(?:\s*[xX]\s*[0-9.]+)?)",
+        r"Sheet\s+size\s*[:\-]?\s*([0-9.]+\s*[xX]\s*[0-9.]+(?:\s*[xX]\s*[0-9.]+)?)",
+        r"\b([0-9.]+\s*[xX]\s*[0-9.]+\s*[xX]\s*[0-9.]+)\b",
+    ]
+    for pattern in sheet_size_patterns:
+        size_match = re.search(pattern, all_text, re.IGNORECASE)
+        if not size_match:
+            continue
+        sheet_size = re.sub(r"\s*[xX]\s*", " x ", size_match.group(1)).strip()
+        break
 
     material = ""
     material_match = re.search(r"\b(10|12|16)\s*ga\b", all_text, re.IGNORECASE)
     if material_match:
         material = f"{material_match.group(1)}ga"
 
-    components: list[dict] = []
-    lines = [line.strip() for line in page1.splitlines() if line.strip()]
-    for line in lines:
-        row_match = re.search(r"\b(?P<sheet_qty>\d+)\b.*?\b(?P<component>[A-Z]{1,4}-[A-Z0-9\-]+)\b", line)
-        if not row_match:
-            continue
-        sheet_qty = int(row_match.group("sheet_qty"))
-        component_id = row_match.group("component")
-        assy_qty = round(sheet_qty / qty_produced, 4) if qty_produced else 0
-        components.append({
-            "sheet_qty": sheet_qty,
-            "assy_qty": assy_qty,
-            "component_id": component_id,
-        })
+    components = _parse_hk_components(page1, qty_produced)
 
     return {
         "primary_part_id": primary_part_id,
@@ -850,6 +845,64 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
         "material": material,
         "components": components,
     }
+
+
+def _parse_hk_components(page1_text: str, qty_produced: int) -> list[dict]:
+    """Parse HK component rows from page-1 table.
+
+    Expected source columns on page 1:
+      * `Part #`   -> `component_id`
+      * `#Pcs`     -> `sheet_qty`
+    """
+
+    components: list[dict] = []
+    lines = [line.strip() for line in page1_text.splitlines() if line.strip()]
+
+    header_seen = False
+    for line in lines:
+        normalized = " ".join(line.split())
+        lower = normalized.lower()
+
+        if "part #" in lower and ("#pcs" in lower or "# pcs" in lower):
+            header_seen = True
+            continue
+
+        # Stop scanning once the table appears to end.
+        if header_seen and (lower.startswith("dwg") or lower.startswith("notes")):
+            break
+
+        # Prefer rows after the table header to avoid accidental matches.
+        if not header_seen:
+            continue
+
+        component_match = re.search(r"\b([A-Z]{1,4}-[A-Z0-9\-]+)\b", normalized)
+        if not component_match:
+            continue
+
+        component_id = component_match.group(1)
+
+        # #Pcs is often printed right of Part #, but can appear before in some exports.
+        trailing_segment = normalized[component_match.end() :]
+        trailing_numbers = [int(value) for value in re.findall(r"\b\d+\b", trailing_segment)]
+        if trailing_numbers:
+            sheet_qty = trailing_numbers[0]
+        else:
+            leading_segment = normalized[: component_match.start()]
+            leading_numbers = [int(value) for value in re.findall(r"\b\d+\b", leading_segment)]
+            if not leading_numbers:
+                continue
+            sheet_qty = leading_numbers[-1]
+
+        assy_qty = round(sheet_qty / qty_produced, 4) if qty_produced else 0
+        components.append(
+            {
+                "sheet_qty": sheet_qty,
+                "assy_qty": assy_qty,
+                "component_id": component_id,
+            }
+        )
+
+    return components
 
 
 @app.post("/engineering/hk-mpfs/parse")
