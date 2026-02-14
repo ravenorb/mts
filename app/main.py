@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -140,6 +140,7 @@ FIELD_CHOICES = {
     ("queues", "status"): ["queued", "in_progress", "blocked", "done"],
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
     ("maintenance_requests", "status"): ["submitted", "reviewed", "scheduled", "waiting on parts", "complete"],
+    ("stations", "station_status"): ["ready/idle", "ready/running", "down/repair", "down/wait part", "down/other"],
     ("purchase_requests", "status"): ["open", "approved", "ordered", "received", "closed"],
     ("engineering_questions", "status"): ["open", "answered", "closed"],
 }
@@ -304,13 +305,32 @@ def create_default_admin(db: Session):
         db.commit()
 
 
+def ensure_station_schema(db: Session):
+    station_columns = {row[1] for row in db.execute(text("PRAGMA table_info(stations)"))}
+    if "station_code" not in station_columns:
+        db.execute(text("ALTER TABLE stations ADD COLUMN station_code VARCHAR(2) DEFAULT ''"))
+    if "station_status" not in station_columns:
+        db.execute(text("ALTER TABLE stations ADD COLUMN station_status VARCHAR(40) DEFAULT 'ready/idle'"))
+    db.commit()
+
+
 def ensure_default_stations(db: Session) -> list[models.Station]:
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     if stations:
+        updated = False
+        for idx, station in enumerate(stations, start=1):
+            if not station.station_code:
+                station.station_code = f"{idx:02d}"[-2:]
+                updated = True
+            if not station.station_status:
+                station.station_status = "ready/idle"
+                updated = True
+        if updated:
+            db.commit()
         return stations
     db.add_all([
-        models.Station(station_name="station1", skill_required=""),
-        models.Station(station_name="station2", skill_required=""),
+        models.Station(station_code="01", station_name="station1", skill_required="", station_status="ready/idle"),
+        models.Station(station_code="02", station_name="station2", skill_required="", station_status="ready/idle"),
     ])
     db.commit()
     return db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
@@ -349,6 +369,7 @@ def require_admin(user=Depends(require_login)):
 def startup():
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
+    ensure_station_schema(db)
     create_default_admin(db)
     ensure_default_stations(db)
 
@@ -632,6 +653,134 @@ def maintenance_dashboard(request: Request, db: Session = Depends(get_db), user=
         "upcoming": upcoming,
         "stations": stations,
     })
+
+
+@app.get("/maintenance/stations/{station_id}/edit", response_class=HTMLResponse)
+def maintenance_station_edit(station_id: int, request: Request, tab: str = "maintenance", db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    skills = db.query(models.Skill).order_by(models.Skill.name.asc()).all()
+    tasks = db.query(models.StationMaintenanceTask).filter_by(station_id=station_id).order_by(models.StationMaintenanceTask.id.desc()).all()
+    logs = db.query(models.MaintenanceLog).filter_by(station_id=station_id).order_by(models.MaintenanceLog.closed_at.desc()).all()
+    consumables = db.query(models.Consumable).filter_by(station_id=station_id).order_by(models.Consumable.description.asc()).all()
+    return templates.TemplateResponse("maintenance_station_edit.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "station": station,
+        "stations": stations,
+        "skills": skills,
+        "status_choices": FIELD_CHOICES[("stations", "station_status")],
+        "tasks": tasks,
+        "logs": logs,
+        "consumables": consumables,
+        "active_tab": tab if tab in {"maintenance", "consumables"} else "maintenance",
+    })
+
+
+@app.post("/maintenance/stations/{station_id}/title")
+async def maintenance_station_save_title(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+    form = await request.form()
+    station_code = (form.get("station_code") or "").strip()
+    station_name = (form.get("station_name") or "").strip()
+    if not station_code.isdigit() or len(station_code) != 2:
+        raise HTTPException(422, "Station ID must be exactly 2 digits")
+    if not station_name:
+        raise HTTPException(422, "Station name is required")
+    station.station_code = station_code
+    station.station_name = station_name
+    db.commit()
+    return RedirectResponse(f"/maintenance/stations/{station_id}/edit", status_code=302)
+
+
+@app.post("/maintenance/stations/{station_id}/settings")
+async def maintenance_station_save_settings(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+    form = await request.form()
+    skill_required = (form.get("skill_required") or "").strip()
+    station_status = (form.get("station_status") or "ready/idle").strip()
+    if station_status not in FIELD_CHOICES[("stations", "station_status")]:
+        raise HTTPException(422, "Invalid station status")
+    station.skill_required = skill_required
+    station.station_status = station_status
+    db.commit()
+    return RedirectResponse(f"/maintenance/stations/{station_id}/edit?tab={(form.get('tab') or 'maintenance')}", status_code=302)
+
+
+@app.post("/maintenance/stations/{station_id}/tasks/new")
+def maintenance_station_add_task(station_id: int, task_description: str = Form(...), frequency_hours: float = Form(...), responsible_role: str = Form("maintenance"), db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+    db.add(models.StationMaintenanceTask(
+        station_id=station_id,
+        task_description=task_description,
+        frequency_hours=max(frequency_hours, 1),
+        responsible_role=responsible_role or "maintenance",
+        active=True,
+        next_due_at=datetime.utcnow() + timedelta(hours=max(frequency_hours, 1)),
+    ))
+    db.commit()
+    return RedirectResponse(f"/maintenance/stations/{station_id}/edit", status_code=302)
+
+
+@app.post("/maintenance/stations/{station_id}/tasks/{task_id}/save")
+def maintenance_station_save_task(station_id: int, task_id: int, task_description: str = Form(...), frequency_hours: float = Form(...), responsible_role: str = Form("maintenance"), active: str | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
+    task = db.query(models.StationMaintenanceTask).filter_by(id=task_id, station_id=station_id).first()
+    if not task:
+        raise HTTPException(404)
+    task.task_description = task_description
+    task.frequency_hours = max(frequency_hours, 1)
+    task.responsible_role = responsible_role or "maintenance"
+    task.active = active == "on"
+    db.commit()
+    return RedirectResponse(f"/maintenance/stations/{station_id}/edit", status_code=302)
+
+
+@app.post("/maintenance/stations/{station_id}/tasks/{task_id}/delete")
+def maintenance_station_delete_task(station_id: int, task_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    task = db.query(models.StationMaintenanceTask).filter_by(id=task_id, station_id=station_id).first()
+    if task:
+        db.delete(task)
+        db.commit()
+    return RedirectResponse(f"/maintenance/stations/{station_id}/edit", status_code=302)
+
+
+@app.post("/maintenance/stations/{station_id}/log/new")
+def maintenance_station_add_log(station_id: int, closure_notes: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id).first()
+    if not station:
+        raise HTTPException(404)
+    req = models.MaintenanceRequest(
+        station_id=station_id,
+        requested_by=user.username,
+        requested_user_id=user.id,
+        priority="normal",
+        status="complete",
+        issue_description=closure_notes or "Manual maintenance log entry",
+        work_comments=closure_notes,
+        request_type="request",
+        completed_at=datetime.utcnow(),
+    )
+    db.add(req)
+    db.flush()
+    db.add(models.MaintenanceLog(
+        maintenance_request_id=req.id,
+        station_id=station_id,
+        closed_by=user.username,
+        closure_notes=closure_notes,
+        closed_at=datetime.utcnow(),
+    ))
+    db.commit()
+    return RedirectResponse(f"/maintenance/stations/{station_id}/edit", status_code=302)
 
 
 @app.get("/maintenance/{request_id}", response_class=HTMLResponse)

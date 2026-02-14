@@ -51,5 +51,15 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .section-nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .section-nav a{color:#001f54;text-decoration:none;background:#e2e8f0;border:1px solid #94a3b8;padding:7px 10px;border-radius:5px;font-size:13px}
 .page-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.active-tab{outline:2px solid #60a5fa}
+.station-title-block{margin:12px 0}
+.station-inline-title{display:flex;align-items:center;gap:10px}
+.inline-title-form h2{margin:0}
+.small-link{font-size:12px;text-transform:lowercase}
+.small-link-btn{font-size:12px;padding:4px 8px}
+.station-inline-edit{display:flex;gap:8px;align-items:center}
+.hidden{display:none}
+.inline-settings-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.inline-settings-form label{display:flex;flex-direction:column;font-size:12px;gap:3px}
 .modal-dialog{border:none;border-radius:8px;padding:0;max-width:620px;width:calc(100% - 24px)}
 .modal-dialog::backdrop{background:rgba(15,23,42,.45)}
