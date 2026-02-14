@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="section-nav" aria-label="Parts actions">
+    <a class="active" href="/engineering/parts">Parts</a>
+  </div>
+  <a class="action-btn {% if show_add %}active-tab{% endif %}" href="/engineering/parts?mode=add">Add</a>
+</div>
+
+{% if show_add %}
+<form class="panel-form" method="post" action="/engineering/parts">
+  <div class="form-field"><label>Part ID</label><input name="part_id" required /></div>
+  <div class="form-field"><label>Description</label><input name="description" /></div>
+  <button type="submit">Save Part</button>
+</form>
+{% endif %}
+
+<table>
+  <tr>
+    <th>Part ID</th>
+    <th>Description</th>
+    <th>Current Rev</th>
+    <th>Actions</th>
+  </tr>
+  {% for part in parts %}
+  <tr>
+    <td>{{ part.part_id }}</td>
+    <td>{{ part.description }}</td>
+    <td>{{ part.cur_rev }}</td>
+    <td>
+      <a href="/engineering/parts/{{ part.part_id }}?mode=view">View</a>
+      |
+      <a href="/engineering/parts/{{ part.part_id }}?mode=edit">Edit</a>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% set page_count = ((total_parts + page_size - 1) // page_size) %}
+{% if page_count > 1 %}
+<div class="action-row">
+  {% for p in range(1, page_count + 1) %}
+    <a class="action-btn {% if p == page %}active-tab{% endif %}" href="/engineering/parts?page={{ p }}{% if show_add %}&mode=add{% endif %}">{{ p }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

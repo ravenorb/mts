@@ -54,6 +54,47 @@ class Part(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class PartMaster(Base):
+    __tablename__ = "part_master"
+    part_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    cur_rev: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RevisionBom(Base):
+    __tablename__ = "revision_bom"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_id: Mapped[str] = mapped_column(ForeignKey("part_master.part_id"))
+    rev_id: Mapped[int] = mapped_column(Integer)
+    comp_id: Mapped[str] = mapped_column(String(80))
+    comp_qty: Mapped[float] = mapped_column(Float, default=0)
+
+
+class RevisionHeader(Base):
+    __tablename__ = "revision_headers"
+    __table_args__ = (UniqueConstraint("part_id", "rev_id", name="uq_revision_header"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_id: Mapped[str] = mapped_column(ForeignKey("part_master.part_id"))
+    rev_id: Mapped[int] = mapped_column(Integer)
+    hk_file: Mapped[str] = mapped_column(Text, default="")
+    hk_qty: Mapped[float] = mapped_column(Float, default=0)
+    wj_file: Mapped[str] = mapped_column(Text, default="")
+    wj_qty: Mapped[float] = mapped_column(Float, default=0)
+    cut_pdf: Mapped[str] = mapped_column(Text, default="")
+    cut_dwg: Mapped[str] = mapped_column(Text, default="")
+    fab_pdf: Mapped[str] = mapped_column(Text, default="")
+    fab_dwg: Mapped[str] = mapped_column(Text, default="")
+    weld_pdf: Mapped[str] = mapped_column(Text, default="")
+    weld_dwg: Mapped[str] = mapped_column(Text, default="")
+    weld_mod: Mapped[str] = mapped_column(Text, default="")
+    released_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    released_by: Mapped[str] = mapped_column(String(80), default="")
+    release_comment: Mapped[str] = mapped_column(Text, default="")
+
+
 class PartRevision(Base):
     __tablename__ = "part_revisions"
     __table_args__ = (UniqueConstraint("part_id", "revision_code", name="uq_part_rev"),)

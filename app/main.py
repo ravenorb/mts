@@ -116,6 +116,9 @@ MODEL_MAP = {
     "employees": models.Employee,
     "skills": models.Skill,
     "employee_skills": models.EmployeeSkill,
+    "part_master": models.PartMaster,
+    "revision_bom": models.RevisionBom,
+    "revision_headers": models.RevisionHeader,
 }
 
 ROLE_WRITE = {
@@ -156,11 +159,20 @@ TOP_NAV = [
 
 ENTITY_GROUPS = {
     "Production": ["pallets", "pallet_parts", "pallet_events", "queues", "production_orders"],
-    "Engineering": ["parts", "part_revisions", "part_revision_files", "engineering_questions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
+    "Engineering": ["parts", "part_master", "revision_bom", "revision_headers", "part_revisions", "part_revision_files", "engineering_questions", "part_process_definitions", "cut_sheets", "cut_sheet_revisions", "cut_sheet_revision_outputs", "boms"],
     "Maintenance": ["maintenance_requests", "station_maintenance_tasks"],
     "Inventory": ["storage_locations", "raw_materials", "consumables", "parts", "delivered_part_lots", "scrap_steel"],
     "People": ["employees", "skills", "employee_skills"],
 }
+
+
+def engineering_nav_context() -> dict:
+    return {
+        "engineering_sections": [
+            {"label": "Overview", "href": "/engineering"},
+            {"label": "Parts", "href": "/engineering/parts"},
+        ]
+    }
 
 MAINTENANCE_ACTIVE_STATUSES = ["submitted", "reviewed", "scheduled", "waiting on parts"]
 LEGACY_MAINTENANCE_STATUS_MAP = {
@@ -531,7 +543,141 @@ def engineering_dashboard(request: Request, db: Session = Depends(get_db), user=
     missing_revisions = db.query(models.Part).outerjoin(models.PartRevision, models.PartRevision.part_id == models.Part.id).filter(models.PartRevision.id.is_(None)).order_by(models.Part.created_at.desc()).all()
     open_questions = db.query(models.EngineeringQuestion).filter_by(status="open").order_by(models.EngineeringQuestion.created_at.desc()).limit(30).all()
     latest_files = db.query(models.PartRevisionFile).order_by(models.PartRevisionFile.uploaded_at.desc()).limit(20).all()
-    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "missing_revisions": missing_revisions, "open_questions": open_questions, "latest_files": latest_files})
+    return templates.TemplateResponse("engineering_dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "missing_revisions": missing_revisions, "open_questions": open_questions, "latest_files": latest_files, **engineering_nav_context()})
+
+
+@app.get("/engineering/parts", response_class=HTMLResponse)
+def engineering_parts_page(request: Request, page: int = 1, mode: str = "", db: Session = Depends(get_db), user=Depends(require_login)):
+    page_size = 50
+    page = max(page, 1)
+    total_parts = db.query(models.PartMaster).count()
+    parts = db.query(models.PartMaster).order_by(models.PartMaster.part_id.asc()).offset((page - 1) * page_size).limit(page_size).all()
+    return templates.TemplateResponse("engineering_parts.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "parts": parts,
+        "page": page,
+        "page_size": page_size,
+        "total_parts": total_parts,
+        "show_add": mode == "add",
+        **engineering_nav_context(),
+    })
+
+
+@app.post("/engineering/parts")
+def engineering_parts_create(part_id: str = Form(...), description: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+    clean_part_id = part_id.strip()
+    if not clean_part_id:
+        raise HTTPException(422, "part_id is required")
+    existing = db.query(models.PartMaster).filter_by(part_id=clean_part_id).first()
+    if existing:
+        raise HTTPException(422, "part_id already exists")
+    db.add(models.PartMaster(part_id=clean_part_id, description=description.strip(), cur_rev=0))
+    db.commit()
+    return RedirectResponse("/engineering/parts", status_code=302)
+
+
+@app.get("/engineering/parts/{part_id}", response_class=HTMLResponse)
+def engineering_part_detail(part_id: str, request: Request, mode: str = "view", rev_id: int | None = None, db: Session = Depends(get_db), user=Depends(require_login)):
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+    selected_rev = rev_id if rev_id is not None else part.cur_rev
+    bom_lines = db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).order_by(models.RevisionBom.id.asc()).all()
+    revision_header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=selected_rev).first()
+    revision_list = db.query(models.RevisionHeader.rev_id).filter_by(part_id=part_id).order_by(models.RevisionHeader.rev_id.desc()).all()
+    return templates.TemplateResponse("engineering_part_detail.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "part": part,
+        "selected_rev": selected_rev,
+        "bom_lines": bom_lines,
+        "revision_header": revision_header,
+        "mode": mode,
+        "revision_list": [item[0] for item in revision_list],
+        **engineering_nav_context(),
+    })
+
+
+@app.post("/engineering/parts/{part_id}/update")
+def engineering_part_update(part_id: str, description: str = Form(""), cur_rev: int = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+    previous_rev = part.cur_rev
+    part.description = description.strip()
+    part.cur_rev = max(cur_rev, 0)
+    if part.cur_rev > previous_rev:
+        existing_header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=part.cur_rev).first()
+        if not existing_header:
+            db.add(models.RevisionHeader(part_id=part_id, rev_id=part.cur_rev))
+    db.commit()
+    return RedirectResponse(f"/engineering/parts/{part_id}?mode=edit", status_code=302)
+
+
+@app.post("/engineering/parts/{part_id}/bom-lines")
+def engineering_part_add_bom_line(part_id: str, rev_id: int = Form(...), comp_id: str = Form(...), comp_qty: float = Form(...), db: Session = Depends(get_db), user=Depends(require_login)):
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+    db.add(models.RevisionBom(part_id=part_id, rev_id=max(rev_id, 0), comp_id=comp_id.strip(), comp_qty=comp_qty))
+    db.commit()
+    return RedirectResponse(f"/engineering/parts/{part_id}?mode=edit&rev_id={max(rev_id, 0)}", status_code=302)
+
+
+@app.post("/engineering/parts/{part_id}/revision-header")
+def engineering_part_upsert_revision_header(
+    part_id: str,
+    rev_id: int = Form(...),
+    hk_file: str = Form(""),
+    hk_qty: float = Form(0),
+    wj_file: str = Form(""),
+    wj_qty: float = Form(0),
+    cut_pdf: str = Form(""),
+    cut_dwg: str = Form(""),
+    fab_pdf: str = Form(""),
+    fab_dwg: str = Form(""),
+    weld_pdf: str = Form(""),
+    weld_dwg: str = Form(""),
+    weld_mod: str = Form(""),
+    released_date: str = Form(""),
+    released_by: str = Form(""),
+    release_comment: str = Form(""),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+
+    header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=max(rev_id, 0)).first()
+    if not header:
+        header = models.RevisionHeader(part_id=part_id, rev_id=max(rev_id, 0))
+        db.add(header)
+
+    header.hk_file = hk_file.strip()
+    header.hk_qty = hk_qty
+    header.wj_file = wj_file.strip()
+    header.wj_qty = wj_qty
+    header.cut_pdf = cut_pdf.strip()
+    header.cut_dwg = cut_dwg.strip()
+    header.fab_pdf = fab_pdf.strip()
+    header.fab_dwg = fab_dwg.strip()
+    header.weld_pdf = weld_pdf.strip()
+    header.weld_dwg = weld_dwg.strip()
+    header.weld_mod = weld_mod.strip()
+    header.released_by = released_by.strip()
+    header.release_comment = release_comment.strip()
+    if released_date.strip():
+        header.released_date = datetime.fromisoformat(released_date.strip())
+    else:
+        header.released_date = None
+    db.commit()
+    return RedirectResponse(f"/engineering/parts/{part_id}?mode=edit&rev_id={max(rev_id, 0)}", status_code=302)
 
 
 @app.get("/engineering/revisions/{part_revision_id}/files", response_class=HTMLResponse)
