@@ -20,6 +20,8 @@ class Employee(Base):
     full_name: Mapped[str] = mapped_column(String(140))
     phone_number: Mapped[str] = mapped_column(String(40), default="")
     email_address: Mapped[str] = mapped_column(String(140), unique=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255), default="")
     start_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, unique=True)
     role: Mapped[str] = mapped_column(String(64), default="operator")
