@@ -341,6 +341,16 @@ def station_nav_context(db: Session) -> dict:
     return {"stations_nav": [{"id": s.id, "name": s.station_name} for s in stations]}
 
 
+def maintenance_station_nav_context(db: Session) -> dict:
+    stations = db.query(models.Station).order_by(models.Station.station_name.asc()).all()
+    return {
+        "maintenance_stations": [
+            {"id": s.id, "name": s.station_name, "code": s.station_code or f"{s.id:02d}"}
+            for s in stations
+        ]
+    }
+
+
 def get_current_user(request: Request, db: Session):
     uid = request.session.get("uid")
     if not uid:
@@ -652,6 +662,7 @@ def maintenance_dashboard(request: Request, db: Session = Depends(get_db), user=
         "open_requests": open_requests,
         "upcoming": upcoming,
         "stations": stations,
+        **maintenance_station_nav_context(db),
     })
 
 
@@ -677,7 +688,8 @@ def maintenance_station_edit(station_id: int, request: Request, tab: str = "main
         "tasks": tasks,
         "logs": logs,
         "consumables": consumables,
-        "active_tab": tab if tab in {"maintenance", "consumables"} else "maintenance",
+        "active_tab": tab if tab in {"maintenance", "consumables", "log"} else "maintenance",
+        **maintenance_station_nav_context(db),
     })
 
 
@@ -799,6 +811,7 @@ def maintenance_request_detail(request_id: int, request: Request, db: Session = 
         "usage_logs": usage_logs,
         "consumables": consumables,
         "status_choices": FIELD_CHOICES[("maintenance_requests", "status")],
+        **maintenance_station_nav_context(db),
     })
 
 
