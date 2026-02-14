@@ -73,3 +73,22 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .modal{position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(15,23,42,.45)}
 .modal-content{background:#fff;margin:12% auto;padding:14px;border-radius:8px;max-width:420px;display:flex;flex-direction:column;gap:8px}
 .modal-content form{display:flex;flex-direction:column;gap:8px}
+
+.part-master-header{position:relative;background:#fff;border:1px solid #ddd;border-radius:6px;padding:12px 12px 26px;margin-bottom:12px}
+.part-master-fields{display:flex;gap:10px;align-items:flex-end}
+.part-master-cell{display:flex;flex-direction:column;gap:4px}
+.part-id-cell{width:25ch}
+.part-rev-cell{width:5ch}
+.part-desc-cell{flex:1}
+.part-master-cell input{padding:8px;border:1px solid #bbb;border-radius:4px;background:#fff}
+.header-save-link{position:absolute;right:12px;bottom:6px;background:transparent;border:none;padding:0;font-size:12px;text-decoration:underline;cursor:pointer}
+
+.bom-block{background:#fff;border:1px solid #ddd;border-radius:6px;padding:0 12px 12px;margin-bottom:12px}
+.bom-controls{display:flex;justify-content:space-between;align-items:center;margin-top:-1px}
+.bom-controls select{border-radius:0 0 5px 5px}
+.bom-controls .small-link-btn{border-radius:0 0 5px 5px}
+.small-col{width:5ch}
+
+.revision-header-form{max-width:100%}
+.revision-header-form table{margin-bottom:12px}
+.revision-header-form input[type="file"]{padding:4px}
