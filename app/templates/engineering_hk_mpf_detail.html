@@ -1,47 +1,68 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>HK MPF Detail</h2>
-
 <table>
-  <tr><th>MPF Filename</th><td>{{record.mpf_filename}}</td></tr>
-  <tr><th>Frame Part ID</th><td>{{record.part_id}}</td></tr>
-  <tr><th>Description</th><td>{{record.description}}</td></tr>
-  <tr><th>QTY Produced</th><td>{{record.qty_produced}}</td></tr>
-  <tr><th>Material</th><td>{{record.material}}</td></tr>
-  <tr><th>Sheet Size</th><td>{{record.sheet_size}}</td></tr>
+  <tr>
+    <td><strong>File name:</strong> {{record.mpf_filename}}</td>
+    <td><strong>Frame Id:</strong> {{record.part_id}}</td>
+    <td><strong>Description:</strong> {{record.description}}</td>
+  </tr>
+  <tr>
+    <td><strong>Qty per sheet:</strong> {{record.qty_produced}}</td>
+    <td><strong>Material:</strong> {{record.material}}</td>
+    <td><strong>Sheet size:</strong> {{record.sheet_size}}</td>
+  </tr>
 </table>
 
-<div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
-  <h3 style="margin:0;">MPF Components</h3>
-  <button type="button" onclick="document.getElementById('add-component-dialog').showModal()">Add</button>
+<div class="page-toolbar maintenance-submenu-row" style="margin-top:1rem; justify-content:flex-start;">
+  <button id="components-tab" type="button" class="action-btn active-tab" onclick="showMpfSection('components')">Components</button>
+  <button id="tune-tab" type="button" class="action-btn" onclick="showMpfSection('tune')">Tune MPF</button>
 </div>
 
-<table>
-  <tr><th>Sheet QTY</th><th>ASSY QTY</th><th>COMPONENT ID</th><th>ACTION</th></tr>
-  {% for detail in details %}
-  <tr>
-    <td>{{detail.sheet_qty}}</td>
-    <td>{{detail.assy_qty}}</td>
-    <td>{{detail.component_id}}</td>
-    <td>
-      <details>
-        <summary>Edit</summary>
-        <form method="post" action="/engineering/hk-mpfs/{{record.id}}/details/{{detail.id}}/edit">
-          <input type="number" step="0.01" name="sheet_qty" value="{{detail.sheet_qty}}" />
-          <input type="number" step="0.0001" name="assy_qty" value="{{detail.assy_qty}}" />
-          <input type="text" name="component_id" value="{{detail.component_id}}" />
-          <button type="submit">Save</button>
+<div id="components-section">
+  <div class="hk-components-header">
+    <div></div>
+    <button type="button" class="small-link-btn" onclick="document.getElementById('add-component-dialog').showModal()">Add</button>
+  </div>
+
+  <table>
+    <tr><th>Sheet QTY</th><th>ASSY QTY</th><th>COMPONENT ID</th><th>ACTION</th></tr>
+    {% for detail in details %}
+    <tr id="mpf-detail-row-{{detail.id}}">
+      <td>
+        <span class="view-mode">{{detail.sheet_qty}}</span>
+        <input class="edit-mode hidden" type="number" step="0.01" name="sheet_qty" value="{{detail.sheet_qty}}" form="mpf-detail-edit-form-{{detail.id}}" />
+      </td>
+      <td>
+        <span class="view-mode">{{detail.assy_qty}}</span>
+        <input class="edit-mode hidden" type="number" step="0.0001" name="assy_qty" value="{{detail.assy_qty}}" form="mpf-detail-edit-form-{{detail.id}}" />
+      </td>
+      <td>
+        <span class="view-mode">{{detail.component_id}}</span>
+        <input class="edit-mode hidden" type="text" name="component_id" value="{{detail.component_id}}" form="mpf-detail-edit-form-{{detail.id}}" />
+      </td>
+      <td>
+        <form id="mpf-detail-edit-form-{{detail.id}}" method="post" action="/engineering/hk-mpfs/{{record.id}}/details/{{detail.id}}/edit" style="display:inline;">
+          <span class="view-mode">
+            <a class="small-link" href="#" onclick="return toggleMpfDetailEdit({{detail.id}}, true)">edit</a>
+            <a class="small-link" href="#" style="margin-left:0.5rem; color:#b91c1c;" onclick="return submitDelete(event, 'mpf-detail-delete-form-{{detail.id}}')">delete</a>
+          </span>
+          <span class="edit-mode hidden">
+            <button type="submit" class="danger-link-btn" style="color:#001f54!important; margin-right:0.5rem;">save</button>
+            <a class="small-link" href="#" onclick="return toggleMpfDetailEdit({{detail.id}}, false)">cancel</a>
+          </span>
         </form>
-      </details>
-      <form method="post" action="/engineering/hk-mpfs/{{record.id}}/details/{{detail.id}}/delete" style="display:inline; margin-left:0.5rem;">
-        <button type="submit">Delete</button>
-      </form>
-    </td>
-  </tr>
-  {% else %}
-  <tr><td colspan="4">No component lines.</td></tr>
-  {% endfor %}
-</table>
+        <form id="mpf-detail-delete-form-{{detail.id}}" method="post" action="/engineering/hk-mpfs/{{record.id}}/details/{{detail.id}}/delete" style="display:none;"></form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No component lines.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div id="tune-section" class="hidden">
+  <div class="card" style="margin-top:0.5rem; max-width:none;">Tune MPF tools coming soon.</div>
+</div>
 
 <dialog id="add-component-dialog">
   <form method="post" action="/engineering/hk-mpfs/{{record.id}}/details">
@@ -53,4 +74,33 @@
     <button type="button" onclick="document.getElementById('add-component-dialog').close()">Cancel</button>
   </form>
 </dialog>
+
+<script>
+  function showMpfSection(sectionName) {
+    const showingComponents = sectionName === 'components';
+    document.getElementById('components-section').classList.toggle('hidden', !showingComponents);
+    document.getElementById('tune-section').classList.toggle('hidden', showingComponents);
+    document.getElementById('components-tab').classList.toggle('active-tab', showingComponents);
+    document.getElementById('tune-tab').classList.toggle('active-tab', !showingComponents);
+  }
+
+  function toggleMpfDetailEdit(detailId, editing) {
+    const row = document.getElementById(`mpf-detail-row-${detailId}`);
+    if (!row) {
+      return false;
+    }
+    row.querySelectorAll('.view-mode').forEach((el) => el.classList.toggle('hidden', editing));
+    row.querySelectorAll('.edit-mode').forEach((el) => el.classList.toggle('hidden', !editing));
+    return false;
+  }
+
+  function submitDelete(event, formId) {
+    event.preventDefault();
+    const form = document.getElementById(formId);
+    if (form) {
+      form.submit();
+    }
+    return false;
+  }
+</script>
 {% endblock %}
