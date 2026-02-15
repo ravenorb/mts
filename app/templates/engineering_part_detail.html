@@ -1,8 +1,10 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="page-toolbar">
-  <div>
-    <a class="action-btn" href="/engineering/parts">Back to Parts</a>
+<div class="page-toolbar maintenance-submenu-row">
+  <div class="action-row">
+    {% for revision_file_button in revision_file_buttons %}
+    <a class="action-btn secondary" href="{{ revision_file_button.href }}" target="_blank" rel="noopener">{{ revision_file_button.label }}</a>
+    {% endfor %}
   </div>
 </div>
 
