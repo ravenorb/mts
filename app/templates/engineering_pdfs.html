@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center;">
+  <h2>Engineering PDFs</h2>
+  <button type="button" onclick="document.getElementById('upload-pdf-dialog').showModal()">Upload</button>
+</div>
+
+<table>
+  <tr>
+    <th>PDF Filename</th>
+    <th>Linked MPF</th>
+    <th>HK Laser (T/F)</th>
+    <th>OMAX WJ (T/F)</th>
+    <th>BP (T/F)</th>
+    <th>Welding (T/F)</th>
+    <th>Actions</th>
+  </tr>
+  {% for row in rows %}
+  <tr>
+    <td><a href="/engineering/pdfs/{{row.id}}/view" target="_blank">{{row.pdf_filename}}</a></td>
+    <td>{% if row.mpf_master_id %}{% for m in mpf_rows %}{% if m.id == row.mpf_master_id %}{{m.mpf_filename}}{% endif %}{% endfor %}{% endif %}</td>
+    <td>{{'T' if row.hk_laser else 'F'}}</td>
+    <td>{{'T' if row.omax_wj else 'F'}}</td>
+    <td>{{'T' if row.bp else 'F'}}</td>
+    <td>{{'T' if row.welding else 'F'}}</td>
+    <td>
+      <details>
+        <summary>Edit</summary>
+        <form method="post" action="/engineering/pdfs/{{row.id}}/edit">
+          <select name="mpf_master_id">
+            <option value="">-- none --</option>
+            {% for m in mpf_rows %}
+            <option value="{{m.id}}" {% if m.id == row.mpf_master_id %}selected{% endif %}>{{m.mpf_filename}}</option>
+            {% endfor %}
+          </select>
+          <label><input type="checkbox" name="hk_laser" {% if row.hk_laser %}checked{% endif %}/> HK Laser</label>
+          <label><input type="checkbox" name="omax_wj" {% if row.omax_wj %}checked{% endif %}/> OMAX WJ</label>
+          <label><input type="checkbox" name="bp" {% if row.bp %}checked{% endif %}/> BP</label>
+          <label><input type="checkbox" name="welding" {% if row.welding %}checked{% endif %}/> Welding</label>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+      <form method="post" action="/engineering/pdfs/{{row.id}}/delete" style="display:inline; margin-left:0.5rem;">
+        <button type="submit">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="7">No engineering PDFs uploaded.</td></tr>
+  {% endfor %}
+</table>
+
+<dialog id="upload-pdf-dialog">
+  <form method="post" action="/engineering/pdfs/upload" enctype="multipart/form-data">
+    <h3>Upload PDF</h3>
+    <input type="file" name="pdf_file" accept=".pdf" required />
+    <select name="mpf_master_id">
+      <option value="">-- link MPF (optional) --</option>
+      {% for m in mpf_rows %}
+      <option value="{{m.id}}">{{m.mpf_filename}}</option>
+      {% endfor %}
+    </select>
+    <label><input type="checkbox" name="hk_laser"/> HK Laser</label>
+    <label><input type="checkbox" name="omax_wj"/> OMAX WJ</label>
+    <label><input type="checkbox" name="bp"/> BP</label>
+    <label><input type="checkbox" name="welding"/> Welding</label>
+    <button type="submit">Upload</button>
+    <button type="button" onclick="document.getElementById('upload-pdf-dialog').close()">Cancel</button>
+  </form>
+</dialog>
+{% endblock %}

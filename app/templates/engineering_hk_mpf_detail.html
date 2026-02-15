@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>HK MPF Detail</h2>
+
+<table>
+  <tr><th>MPF Filename</th><td>{{record.mpf_filename}}</td></tr>
+  <tr><th>Frame Part ID</th><td>{{record.part_id}}</td></tr>
+  <tr><th>Description</th><td>{{record.description}}</td></tr>
+  <tr><th>QTY Produced</th><td>{{record.qty_produced}}</td></tr>
+  <tr><th>Material</th><td>{{record.material}}</td></tr>
+  <tr><th>Sheet Size</th><td>{{record.sheet_size}}</td></tr>
+</table>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+  <h3 style="margin:0;">MPF Components</h3>
+  <button type="button" onclick="document.getElementById('add-component-dialog').showModal()">Add</button>
+</div>
+
+<table>
+  <tr><th>Sheet QTY</th><th>ASSY QTY</th><th>COMPONENT ID</th><th>ACTION</th></tr>
+  {% for detail in details %}
+  <tr>
+    <td>{{detail.sheet_qty}}</td>
+    <td>{{detail.assy_qty}}</td>
+    <td>{{detail.component_id}}</td>
+    <td>
+      <details>
+        <summary>Edit</summary>
+        <form method="post" action="/engineering/hk-mpfs/{{record.id}}/details/{{detail.id}}/edit">
+          <input type="number" step="0.01" name="sheet_qty" value="{{detail.sheet_qty}}" />
+          <input type="number" step="0.0001" name="assy_qty" value="{{detail.assy_qty}}" />
+          <input type="text" name="component_id" value="{{detail.component_id}}" />
+          <button type="submit">Save</button>
+        </form>
+      </details>
+      <form method="post" action="/engineering/hk-mpfs/{{record.id}}/details/{{detail.id}}/delete" style="display:inline; margin-left:0.5rem;">
+        <button type="submit">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4">No component lines.</td></tr>
+  {% endfor %}
+</table>
+
+<dialog id="add-component-dialog">
+  <form method="post" action="/engineering/hk-mpfs/{{record.id}}/details">
+    <h4>Add Component</h4>
+    <label>Sheet QTY <input type="number" step="0.01" name="sheet_qty" required /></label><br/>
+    <label>ASSY QTY <input type="number" step="0.0001" name="assy_qty" required /></label><br/>
+    <label>Component ID <input type="text" name="component_id" required /></label><br/>
+    <button type="submit">Add</button>
+    <button type="button" onclick="document.getElementById('add-component-dialog').close()">Cancel</button>
+  </form>
+</dialog>
+{% endblock %}
