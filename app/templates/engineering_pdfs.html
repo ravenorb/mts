@@ -16,17 +16,19 @@
     <th>Actions</th>
   </tr>
   {% for row in rows %}
-  <tr>
+  <tr id="pdf-row-{{row.id}}">
     <td><a href="/engineering/pdfs/{{row.id}}/view" target="_blank">{{row.pdf_filename}}</a></td>
     <td>{% if row.mpf_master_id %}{% for m in mpf_rows %}{% if m.id == row.mpf_master_id %}{{m.mpf_filename}}{% endif %}{% endfor %}{% endif %}</td>
     <td>{{'T' if row.hk_laser else 'F'}}</td>
     <td>{{'T' if row.omax_wj else 'F'}}</td>
     <td>{{'T' if row.bp else 'F'}}</td>
     <td>{{'T' if row.welding else 'F'}}</td>
-    <td>
-      <details>
-        <summary>Edit</summary>
-        <form method="post" action="/engineering/pdfs/{{row.id}}/edit">
+    <td class="actions-links">
+      <form id="pdf-edit-form-{{row.id}}" method="post" action="/engineering/pdfs/{{row.id}}/edit" style="display:inline;">
+        <span class="view-mode">
+          <a href="#" onclick="return togglePdfEdit({{row.id}}, true)">edit</a>
+        </span>
+        <span class="edit-mode hidden">
           <select name="mpf_master_id">
             <option value="">-- none --</option>
             {% for m in mpf_rows %}
@@ -37,11 +39,14 @@
           <label><input type="checkbox" name="omax_wj" {% if row.omax_wj %}checked{% endif %}/> OMAX WJ</label>
           <label><input type="checkbox" name="bp" {% if row.bp %}checked{% endif %}/> BP</label>
           <label><input type="checkbox" name="welding" {% if row.welding %}checked{% endif %}/> Welding</label>
-          <button type="submit">Save</button>
-        </form>
-      </details>
-      <form method="post" action="/engineering/pdfs/{{row.id}}/delete" style="display:inline; margin-left:0.5rem;">
-        <button type="submit">Delete</button>
+          <button type="submit">save</button>
+          |
+          <a href="#" onclick="return togglePdfEdit({{row.id}}, false)">cancel</a>
+        </span>
+      </form>
+      <span class="view-mode"> | </span>
+      <form method="post" action="/engineering/pdfs/{{row.id}}/delete" style="display:inline;" onsubmit="return confirm('Delete PDF {{row.pdf_filename}}?');">
+        <button type="submit" class="danger-link-btn">delete</button>
       </form>
     </td>
   </tr>
@@ -68,4 +73,16 @@
     <button type="button" onclick="document.getElementById('upload-pdf-dialog').close()">Cancel</button>
   </form>
 </dialog>
+
+<script>
+  function togglePdfEdit(rowId, editing) {
+    const row = document.getElementById(`pdf-row-${rowId}`);
+    if (!row) {
+      return false;
+    }
+    row.querySelectorAll('.view-mode').forEach((el) => el.classList.toggle('hidden', editing));
+    row.querySelectorAll('.edit-mode').forEach((el) => el.classList.toggle('hidden', !editing));
+    return false;
+  }
+</script>
 {% endblock %}

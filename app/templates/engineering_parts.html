@@ -36,11 +36,11 @@
     <td>{{ part.part_id }}</td>
     <td>{{ part.description }}</td>
     <td>{{ part.cur_rev }}</td>
-    <td>
-      <a href="/engineering/parts/{{ part.part_id }}?mode=edit">Edit</a>
+    <td class="actions-links">
+      <a href="/engineering/parts/{{ part.part_id }}?mode=edit">edit</a>
       |
       <form method="post" action="/engineering/parts/{{ part.part_id }}/delete" style="display:inline;" onsubmit="return confirm('Delete part {{ part.part_id }}?');">
-        <button type="submit" class="small-link-btn danger-link-btn">Delete</button>
+        <button type="submit" class="danger-link-btn">delete</button>
       </form>
     </td>
   </tr>
