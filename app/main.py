@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func, text
@@ -593,6 +593,41 @@ def engineering_part_detail(part_id: str, request: Request, mode: str = "view", 
     bom_lines = db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).order_by(models.RevisionBom.id.asc()).all()
     revision_header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=selected_rev).first()
     revision_list = db.query(models.RevisionHeader.rev_id).filter_by(part_id=part_id).order_by(models.RevisionHeader.rev_id.desc()).all()
+
+    revision_file_buttons: list[dict[str, str]] = []
+    if revision_header:
+        dwg_payload: dict[str, str] = {}
+        if revision_header.weld_mod and revision_header.weld_mod.strip().startswith("{"):
+            try:
+                decoded = json.loads(revision_header.weld_mod)
+                if isinstance(decoded, dict):
+                    dwg_payload = {str(key): str(value) for key, value in decoded.items() if isinstance(value, str)}
+            except json.JSONDecodeError:
+                dwg_payload = {}
+
+        button_specs = [
+            ("HK PDF", revision_header.hk_file),
+            ("HK MPF", revision_header.cut_dwg),
+            ("OMAX PDF", revision_header.wj_file),
+            ("OMAX G", revision_header.fab_pdf),
+            ("Brake Press PDF", revision_header.cut_pdf),
+            ("Brake Press DWG", dwg_payload.get("brake_dwg", "")),
+            ("WELD PDF", revision_header.weld_pdf),
+            ("WELD DWG", dwg_payload.get("weld_dwg", "")),
+            ("WELD MOD", revision_header.weld_dwg),
+        ]
+
+        for index, (label, stored_path) in enumerate(button_specs):
+            if not stored_path:
+                continue
+            file_path = Path(stored_path)
+            if not file_path.exists() or not file_path.is_file():
+                continue
+            revision_file_buttons.append({
+                "label": label,
+                "href": f"/engineering/parts/{part_id}/revisions/{selected_rev}/files/{index}",
+            })
+
     return templates.TemplateResponse("engineering_part_detail.html", {
         "request": request,
         "user": user,
@@ -604,8 +639,49 @@ def engineering_part_detail(part_id: str, request: Request, mode: str = "view", 
         "revision_header": revision_header,
         "mode": mode,
         "revision_list": [item[0] for item in revision_list],
+        "revision_file_buttons": revision_file_buttons,
         **engineering_nav_context(),
     })
+
+
+@app.get("/engineering/parts/{part_id}/revisions/{rev_id}/files/{file_key}")
+def engineering_part_download_revision_file(part_id: str, rev_id: int, file_key: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=max(rev_id, 0)).first()
+    if not header:
+        raise HTTPException(404)
+
+    dwg_payload: dict[str, str] = {}
+    if header.weld_mod and header.weld_mod.strip().startswith("{"):
+        try:
+            decoded = json.loads(header.weld_mod)
+            if isinstance(decoded, dict):
+                dwg_payload = {str(key): str(value) for key, value in decoded.items() if isinstance(value, str)}
+        except json.JSONDecodeError:
+            dwg_payload = {}
+
+    file_paths = [
+        header.hk_file,
+        header.cut_dwg,
+        header.wj_file,
+        header.fab_pdf,
+        header.cut_pdf,
+        dwg_payload.get("brake_dwg", ""),
+        header.weld_pdf,
+        dwg_payload.get("weld_dwg", ""),
+        header.weld_dwg,
+    ]
+    if file_key < 0 or file_key >= len(file_paths):
+        raise HTTPException(404)
+
+    stored_path = file_paths[file_key]
+    if not stored_path:
+        raise HTTPException(404)
+
+    file_path = Path(stored_path)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404)
+
+    return FileResponse(path=file_path, filename=file_path.name)
 
 
 @app.post("/engineering/parts/{part_id}/update")
