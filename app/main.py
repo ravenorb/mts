@@ -584,11 +584,25 @@ def engineering_parts_create(part_id: str = Form(...), description: str = Form("
     return RedirectResponse(f"/engineering/parts/{clean_part_id}?mode=edit", status_code=302)
 
 
-@app.get("/engineering/parts/{part_id}", response_class=HTMLResponse)
-def engineering_part_detail(part_id: str, request: Request, mode: str = "view", rev_id: int | None = None, db: Session = Depends(get_db), user=Depends(require_login)):
+@app.post("/engineering/parts/{part_id}/delete")
+def engineering_part_delete(part_id: str, db: Session = Depends(get_db), user=Depends(require_login)):
     part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
     if not part:
         raise HTTPException(404)
+
+    db.query(models.RevisionBom).filter_by(part_id=part_id).delete(synchronize_session=False)
+    db.query(models.RevisionHeader).filter_by(part_id=part_id).delete(synchronize_session=False)
+    db.delete(part)
+    db.commit()
+    return RedirectResponse("/engineering/parts", status_code=302)
+
+
+@app.get("/engineering/parts/{part_id}", response_class=HTMLResponse)
+def engineering_part_detail(part_id: str, request: Request, mode: str = "edit", rev_id: int | None = None, db: Session = Depends(get_db), user=Depends(require_login)):
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+    mode = "edit"
     selected_rev = rev_id if rev_id is not None else part.cur_rev
     bom_lines = db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).order_by(models.RevisionBom.id.asc()).all()
     revision_header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=selected_rev).first()
