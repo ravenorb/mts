@@ -1083,11 +1083,14 @@ async def engineering_hk_mpf_parse(mpf_file: UploadFile = File(...), pdf_file: U
 @app.post("/engineering/parts/upload-pdf")
 async def engineering_parts_upload_pdf(
     pdf_file: UploadFile = File(...),
+    hk_machine_file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user=Depends(require_login),
 ):
     if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDF file is required.")
+    if not hk_machine_file.filename:
+        raise HTTPException(status_code=400, detail="HK laser machine file is required.")
 
     pdf_bytes = await pdf_file.read()
     parsed = parse_hk_cutsheet(pdf_bytes)
@@ -1124,6 +1127,8 @@ async def engineering_parts_upload_pdf(
 
     hk_pdf_path = PART_FILE_DIR / f"{part_id}_hk.pdf"
     brake_pdf_path = PART_FILE_DIR / f"{part_id}_br.pdf"
+    hk_machine_name = Path(hk_machine_file.filename).name
+    hk_machine_path = PART_FILE_DIR / f"{part_id}_{int(datetime.utcnow().timestamp())}_{hk_machine_name}"
 
     hk_writer = PdfWriter()
     hk_writer.add_page(reader.pages[0])
@@ -1135,8 +1140,15 @@ async def engineering_parts_upload_pdf(
     with brake_pdf_path.open("wb") as brake_file:
         brake_writer.write(brake_file)
 
+    hk_machine_bytes = await hk_machine_file.read()
+    hk_machine_path.write_bytes(hk_machine_bytes)
+
     existing_header.hk_file = str(hk_pdf_path)
     existing_header.cut_pdf = str(brake_pdf_path)
+    existing_header.cut_dwg = str(hk_machine_path)
+    existing_header.hk_qty = parsed.get("qty_produced") or 0
+    existing_header.released_by = user.username
+    existing_header.released_date = datetime.utcnow()
 
     db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).delete(synchronize_session=False)
     for component in parsed.get("components", []):

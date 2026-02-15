@@ -7,6 +7,7 @@
   <div class="action-row" style="margin-top:0; margin-left:auto;">
   <form id="parts-pdf-upload-form" method="post" enctype="multipart/form-data" action="/engineering/parts/upload-pdf" style="display:none;">
     <input type="file" id="parts-pdf-file" name="pdf_file" accept=".pdf,application/pdf" />
+    <input type="file" id="parts-hk-machine-file" name="hk_machine_file" />
   </form>
   <button type="button" id="parts-upload-pdf-btn" class="action-btn">Upload PDF</button>
   <a class="action-btn {% if show_add %}active-tab{% endif %}" href="/engineering/parts?mode=add">Add</a>
@@ -56,6 +57,7 @@
 <script>
   const uploadPdfBtn = document.getElementById('parts-upload-pdf-btn');
   const uploadPdfInput = document.getElementById('parts-pdf-file');
+  const uploadMachineInput = document.getElementById('parts-hk-machine-file');
   const uploadPdfForm = document.getElementById('parts-pdf-upload-form');
 
   uploadPdfBtn.addEventListener('click', () => {
@@ -66,6 +68,20 @@
     if (!uploadPdfInput.files || uploadPdfInput.files.length === 0) {
       return;
     }
+
+    uploadMachineInput.value = '';
+    uploadMachineInput.click();
+  });
+
+  uploadMachineInput.addEventListener('change', () => {
+    if (!uploadPdfInput.files || uploadPdfInput.files.length === 0) {
+      return;
+    }
+    if (!uploadMachineInput.files || uploadMachineInput.files.length === 0) {
+      uploadPdfInput.value = '';
+      return;
+    }
+
     uploadPdfForm.submit();
   });
 </script>
