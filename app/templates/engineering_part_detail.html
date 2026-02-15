@@ -6,6 +6,9 @@
     <a class="action-btn secondary" href="{{ revision_file_button.href }}" target="_blank" rel="noopener">{{ revision_file_button.label }}</a>
     {% endfor %}
   </div>
+  {% if mode == 'edit' %}
+  <button type="button" class="small-link-btn toolbar-upload-btn" onclick="document.getElementById('revision-upload-dialog').showModal()">Upload</button>
+  {% endif %}
 </div>
 
 <form class="part-master-header" method="post" action="/engineering/parts/{{ part.part_id }}/update">
@@ -65,40 +68,50 @@
 </dialog>
 {% endif %}
 
-<form class="panel-form revision-header-form" method="post" enctype="multipart/form-data" action="/engineering/parts/{{ part.part_id }}/revision-header">
-  <h3>Revision Header Data</h3>
-  <input type="hidden" name="rev_id" value="{{ selected_rev }}" />
-  <table>
-    <tr>
-      <th></th>
-      <th>HK LASER</th>
-      <th>OMAX WJ</th>
-      <th>BRAKE PRESS</th>
-      <th>WELDING</th>
-    </tr>
-    <tr>
-      <td>PDF File</td>
-      <td><input type="file" name="hk_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="wj_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="brake_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="weld_pdf_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-    </tr>
-    <tr>
-      <td>Machine File</td>
-      <td><input type="file" name="hk_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="wj_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="brake_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="weld_machine_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-    </tr>
-    <tr>
-      <td>Qty/DWG</td>
-      <td><input type="number" step="0.001" name="hk_qty" value="{{ revision_header.hk_qty if revision_header else 0 }}" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="number" step="0.001" name="wj_qty" value="{{ revision_header.wj_qty if revision_header else 0 }}" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="brake_dwg_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-      <td><input type="file" name="weld_dwg_upload" {% if mode != 'edit' %}disabled{% endif %}/></td>
-    </tr>
-  </table>
+{% if mode == 'edit' %}
+<dialog id="revision-upload-dialog" class="modal-dialog">
+  <form class="panel-form revision-upload-form" method="post" enctype="multipart/form-data" action="/engineering/parts/{{ part.part_id }}/revision-header">
+    <input type="hidden" name="rev_id" value="{{ selected_rev }}" />
+    <table>
+      <tr>
+        <th></th>
+        <th>HK LASER</th>
+        <th>OMAX WJ</th>
+        <th>BRAKE PRESS</th>
+        <th>WELDING</th>
+      </tr>
+      <tr>
+        <td>PDF File</td>
+        <td><input type="file" name="hk_pdf_upload" /></td>
+        <td><input type="file" name="wj_pdf_upload" /></td>
+        <td><input type="file" name="brake_pdf_upload" /></td>
+        <td><input type="file" name="weld_pdf_upload" /></td>
+      </tr>
+      <tr>
+        <td>Machine File</td>
+        <td><input type="file" name="hk_machine_upload" /></td>
+        <td><input type="file" name="wj_machine_upload" /></td>
+        <td><input type="file" name="brake_machine_upload" /></td>
+        <td><input type="file" name="weld_machine_upload" /></td>
+      </tr>
+      <tr>
+        <td>Qty/DWG</td>
+        <td><input type="number" step="0.001" name="hk_qty" value="{{ revision_header.hk_qty if revision_header else 0 }}" /></td>
+        <td><input type="number" step="0.001" name="wj_qty" value="{{ revision_header.wj_qty if revision_header else 0 }}" /></td>
+        <td><input type="file" name="brake_dwg_upload" /></td>
+        <td><input type="file" name="weld_dwg_upload" /></td>
+      </tr>
+    </table>
+    <div class="action-row">
+      <button type="submit">Save Uploads</button>
+      <button type="button" onclick="document.getElementById('revision-upload-dialog').close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
 
+<form class="panel-form revision-header-form" method="post" enctype="multipart/form-data" action="/engineering/parts/{{ part.part_id }}/revision-header">
+  <input type="hidden" name="rev_id" value="{{ selected_rev }}" />
   <table>
     <tr>
       <th style="width:70%">Released By</th>
@@ -112,7 +125,7 @@
       <th colspan="2">Release Notes</th>
     </tr>
     <tr>
-      <td colspan="2"><textarea name="release_comment" {% if mode != 'edit' %}disabled{% endif %}>{{ revision_header.release_comment if revision_header else '' }}</textarea></td>
+      <td colspan="2"><textarea class="release-notes-area" name="release_comment" {% if mode != 'edit' %}disabled{% endif %}>{{ revision_header.release_comment if revision_header else '' }}</textarea></td>
     </tr>
   </table>
 
