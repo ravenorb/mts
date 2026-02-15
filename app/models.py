@@ -95,6 +95,42 @@ class RevisionHeader(Base):
     release_comment: Mapped[str] = mapped_column(Text, default="")
 
 
+class MpfMaster(Base):
+    __tablename__ = "mpf_master"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mpf_filename: Mapped[str] = mapped_column(String(255), unique=True)
+    part_id: Mapped[str] = mapped_column(String(80), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    qty_produced: Mapped[float] = mapped_column(Float, default=0)
+    material: Mapped[str] = mapped_column(String(120), default="")
+    sheet_size: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MpfDetail(Base):
+    __tablename__ = "mpf_detail"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mpf_master_id: Mapped[int] = mapped_column(ForeignKey("mpf_master.id"))
+    sheet_qty: Mapped[float] = mapped_column(Float, default=0)
+    assy_qty: Mapped[float] = mapped_column(Float, default=0)
+    component_id: Mapped[str] = mapped_column(String(80), default="")
+
+
+class EngineeringPdf(Base):
+    __tablename__ = "engineering_pdfs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pdf_filename: Mapped[str] = mapped_column(String(255), unique=True)
+    pdf_path: Mapped[str] = mapped_column(Text)
+    mpf_master_id: Mapped[int | None] = mapped_column(ForeignKey("mpf_master.id"), nullable=True)
+    hk_laser: Mapped[bool] = mapped_column(Boolean, default=False)
+    omax_wj: Mapped[bool] = mapped_column(Boolean, default=False)
+    bp: Mapped[bool] = mapped_column(Boolean, default=False)
+    welding: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class PartRevision(Base):
     __tablename__ = "part_revisions"
     __table_args__ = (UniqueConstraint("part_id", "revision_code", name="uq_part_rev"),)

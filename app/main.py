@@ -879,7 +879,86 @@ def engineering_machine_program_stub(request: Request, db: Session = Depends(get
 
 @app.get("/engineering/hk-mpfs", response_class=HTMLResponse)
 def engineering_hk_mpfs_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    return templates.TemplateResponse("engineering_hk_mpfs.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, **engineering_nav_context()})
+    rows = db.query(models.MpfMaster).order_by(models.MpfMaster.created_at.desc()).all()
+    return templates.TemplateResponse("engineering_hk_mpfs.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows, **engineering_nav_context()})
+
+
+@app.get("/engineering/hk-mpfs/{mpf_id}", response_class=HTMLResponse)
+def engineering_hk_mpf_detail_page(mpf_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    record = db.query(models.MpfMaster).filter_by(id=mpf_id).first()
+    if not record:
+        raise HTTPException(404)
+    details = db.query(models.MpfDetail).filter_by(mpf_master_id=mpf_id).order_by(models.MpfDetail.id.asc()).all()
+    return templates.TemplateResponse("engineering_hk_mpf_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "record": record, "details": details, **engineering_nav_context()})
+
+
+@app.post("/engineering/hk-mpfs/{mpf_id}/edit")
+async def engineering_hk_mpf_edit(mpf_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    record = db.query(models.MpfMaster).filter_by(id=mpf_id).first()
+    if not record:
+        raise HTTPException(404)
+    form = await request.form()
+    record.part_id = (form.get("part_id") or "").strip()
+    record.description = (form.get("description") or "").strip()
+    record.qty_produced = float(form.get("qty_produced") or 0)
+    record.material = (form.get("material") or "").strip()
+    db.commit()
+    return RedirectResponse("/engineering/hk-mpfs", status_code=302)
+
+
+@app.post("/engineering/hk-mpfs/{mpf_id}/delete")
+def engineering_hk_mpf_delete(mpf_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    record = db.query(models.MpfMaster).filter_by(id=mpf_id).first()
+    if record:
+        db.query(models.MpfDetail).filter_by(mpf_master_id=mpf_id).delete(synchronize_session=False)
+        db.query(models.EngineeringPdf).filter_by(mpf_master_id=mpf_id).update({"mpf_master_id": None}, synchronize_session=False)
+        db.delete(record)
+        db.commit()
+    return RedirectResponse("/engineering/hk-mpfs", status_code=302)
+
+
+@app.post("/engineering/hk-mpfs/{mpf_id}/details")
+async def engineering_hk_mpf_add_detail(mpf_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    record = db.query(models.MpfMaster).filter_by(id=mpf_id).first()
+    if not record:
+        raise HTTPException(404)
+    form = await request.form()
+    component_id = (form.get("component_id") or "").strip()
+    if component_id:
+        db.add(models.MpfDetail(
+            mpf_master_id=mpf_id,
+            sheet_qty=float(form.get("sheet_qty") or 0),
+            assy_qty=float(form.get("assy_qty") or 0),
+            component_id=component_id,
+        ))
+        ensure_inventory_component_exists(db, component_id)
+        db.commit()
+    return RedirectResponse(f"/engineering/hk-mpfs/{mpf_id}", status_code=302)
+
+
+@app.post("/engineering/hk-mpfs/{mpf_id}/details/{detail_id}/edit")
+async def engineering_hk_mpf_edit_detail(mpf_id: int, detail_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    detail = db.query(models.MpfDetail).filter_by(id=detail_id, mpf_master_id=mpf_id).first()
+    if not detail:
+        raise HTTPException(404)
+    form = await request.form()
+    component_id = (form.get("component_id") or "").strip()
+    detail.sheet_qty = float(form.get("sheet_qty") or 0)
+    detail.assy_qty = float(form.get("assy_qty") or 0)
+    detail.component_id = component_id
+    if component_id:
+        ensure_inventory_component_exists(db, component_id)
+    db.commit()
+    return RedirectResponse(f"/engineering/hk-mpfs/{mpf_id}", status_code=302)
+
+
+@app.post("/engineering/hk-mpfs/{mpf_id}/details/{detail_id}/delete")
+def engineering_hk_mpf_delete_detail(mpf_id: int, detail_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    detail = db.query(models.MpfDetail).filter_by(id=detail_id, mpf_master_id=mpf_id).first()
+    if detail:
+        db.delete(detail)
+        db.commit()
+    return RedirectResponse(f"/engineering/hk-mpfs/{mpf_id}", status_code=302)
 
 
 def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
@@ -1068,6 +1147,62 @@ def _parse_hk_components(page_texts: list[str], qty_produced: int) -> list[dict]
     return list(seen.values())
 
 
+def ensure_inventory_component_exists(db: Session, component_id: str):
+    existing_part = db.query(models.Part).filter_by(part_number=component_id).first()
+    if existing_part:
+        return
+    new_part = models.Part(part_number=component_id, description="")
+    db.add(new_part)
+    db.flush()
+    db.add(models.PartInventory(
+        part_id=new_part.id,
+        qty_on_hand_total=0,
+        qty_stored=0,
+        qty_queued_to_cut=0,
+        qty_to_bend=0,
+        qty_to_weld=0,
+    ))
+
+
+def upsert_mpf_master_with_details(db: Session, mpf_filename: str, parsed: dict, components: list[dict]) -> models.MpfMaster:
+    record = db.query(models.MpfMaster).filter_by(mpf_filename=mpf_filename).first()
+    if not record:
+        record = models.MpfMaster(mpf_filename=mpf_filename)
+        db.add(record)
+        db.flush()
+    record.part_id = (parsed.get("primary_part_id") or "").strip()
+    record.description = (parsed.get("primary_description") or "").strip()
+    record.qty_produced = float(parsed.get("qty_produced") or 0)
+    record.material = (parsed.get("material") or "").strip()
+    record.sheet_size = (parsed.get("sheet_size") or "").strip()
+
+    db.query(models.MpfDetail).filter_by(mpf_master_id=record.id).delete(synchronize_session=False)
+    for component in components:
+        component_id = (component.get("component_id") or "").strip()
+        if not component_id:
+            continue
+        db.add(models.MpfDetail(
+            mpf_master_id=record.id,
+            sheet_qty=float(component.get("sheet_qty") or 0),
+            assy_qty=float(component.get("assy_qty") or 0),
+            component_id=component_id,
+        ))
+    return record
+
+
+def upsert_engineering_pdf(db: Session, pdf_filename: str, pdf_path: Path, mpf_master_id: int | None, hk_laser: bool, omax_wj: bool, bp: bool, welding: bool):
+    pdf_record = db.query(models.EngineeringPdf).filter_by(pdf_filename=pdf_filename).first()
+    if not pdf_record:
+        pdf_record = models.EngineeringPdf(pdf_filename=pdf_filename, pdf_path=str(pdf_path))
+        db.add(pdf_record)
+    pdf_record.pdf_path = str(pdf_path)
+    pdf_record.mpf_master_id = mpf_master_id
+    pdf_record.hk_laser = hk_laser
+    pdf_record.omax_wj = omax_wj
+    pdf_record.bp = bp
+    pdf_record.welding = welding
+
+
 @app.post("/engineering/hk-mpfs/parse")
 async def engineering_hk_mpf_parse(mpf_file: UploadFile = File(...), pdf_file: UploadFile = File(...), user=Depends(require_login)):
     if not mpf_file.filename:
@@ -1125,9 +1260,11 @@ async def engineering_parts_upload_pdf(
     hk_pdf_path = PART_FILE_DIR / f"{part_id}_hk.pdf"
     brake_pdf_path = PART_FILE_DIR / f"{part_id}_br.pdf"
     hk_machine_path: Path | None = None
+    mpf_filename = ""
     if hk_machine_file and hk_machine_file.filename:
         hk_machine_name = Path(hk_machine_file.filename).name
         hk_machine_path = PART_FILE_DIR / f"{part_id}_{int(datetime.utcnow().timestamp())}_{hk_machine_name}"
+        mpf_filename = hk_machine_name
 
     hk_writer = PdfWriter()
     hk_writer.add_page(reader.pages[0])
@@ -1152,12 +1289,40 @@ async def engineering_parts_upload_pdf(
     existing_header.released_date = datetime.utcnow()
 
     db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).delete(synchronize_session=False)
+    parsed_components: list[dict] = []
     for component in parsed.get("components", []):
         comp_id = (component.get("component_id") or "").strip()
         assy_qty = component.get("assy_qty")
         if not comp_id or assy_qty in (None, ""):
             continue
+        parsed_components.append(component)
         db.add(models.RevisionBom(part_id=part_id, rev_id=selected_rev, comp_id=comp_id, comp_qty=float(assy_qty)))
+        ensure_inventory_component_exists(db, comp_id)
+
+    mpf_record = None
+    if mpf_filename:
+        mpf_record = upsert_mpf_master_with_details(db, mpf_filename=mpf_filename, parsed=parsed, components=parsed_components)
+
+    upsert_engineering_pdf(
+        db=db,
+        pdf_filename=hk_pdf_path.name,
+        pdf_path=hk_pdf_path,
+        mpf_master_id=mpf_record.id if mpf_record else None,
+        hk_laser=True,
+        omax_wj=False,
+        bp=False,
+        welding=False,
+    )
+    upsert_engineering_pdf(
+        db=db,
+        pdf_filename=brake_pdf_path.name,
+        pdf_path=brake_pdf_path,
+        mpf_master_id=mpf_record.id if mpf_record else None,
+        hk_laser=False,
+        omax_wj=False,
+        bp=True,
+        welding=False,
+    )
 
     db.commit()
     return RedirectResponse(f"/engineering/parts/{part_id}?mode=edit&rev_id={selected_rev}", status_code=302)
@@ -1175,7 +1340,75 @@ def engineering_abb_modules_page(request: Request, db: Session = Depends(get_db)
 
 @app.get("/engineering/pdfs", response_class=HTMLResponse)
 def engineering_pdfs_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    return templates.TemplateResponse("engineering_machine_program_stub.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "page_title": "PDFs", "page_message": "PDF dashboard is coming next.", **engineering_nav_context()})
+    rows = db.query(models.EngineeringPdf).order_by(models.EngineeringPdf.created_at.desc()).all()
+    mpf_rows = db.query(models.MpfMaster).order_by(models.MpfMaster.mpf_filename.asc()).all()
+    return templates.TemplateResponse("engineering_pdfs.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows, "mpf_rows": mpf_rows, **engineering_nav_context()})
+
+
+@app.post("/engineering/pdfs/upload")
+async def engineering_pdfs_upload(
+    pdf_file: UploadFile = File(...),
+    mpf_master_id: int | None = Form(None),
+    hk_laser: str | None = Form(None),
+    omax_wj: str | None = Form(None),
+    bp: str | None = Form(None),
+    welding: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF file is required.")
+    safe_name = Path(pdf_file.filename).name
+    output_path = PDF_DIR / f"{int(datetime.utcnow().timestamp())}_{safe_name}"
+    output_path.write_bytes(await pdf_file.read())
+    upsert_engineering_pdf(
+        db=db,
+        pdf_filename=safe_name,
+        pdf_path=output_path,
+        mpf_master_id=mpf_master_id,
+        hk_laser=bool(hk_laser),
+        omax_wj=bool(omax_wj),
+        bp=bool(bp),
+        welding=bool(welding),
+    )
+    db.commit()
+    return RedirectResponse("/engineering/pdfs", status_code=302)
+
+
+@app.get("/engineering/pdfs/{pdf_id}/view")
+def engineering_pdfs_view(pdf_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.EngineeringPdf).filter_by(id=pdf_id).first()
+    if not row:
+        raise HTTPException(404)
+    file_path = Path(row.pdf_path)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path=file_path, filename=row.pdf_filename)
+
+
+@app.post("/engineering/pdfs/{pdf_id}/edit")
+async def engineering_pdfs_edit(pdf_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.EngineeringPdf).filter_by(id=pdf_id).first()
+    if not row:
+        raise HTTPException(404)
+    form = await request.form()
+    mpf_raw = form.get("mpf_master_id")
+    row.mpf_master_id = int(mpf_raw) if mpf_raw else None
+    row.hk_laser = bool(form.get("hk_laser"))
+    row.omax_wj = bool(form.get("omax_wj"))
+    row.bp = bool(form.get("bp"))
+    row.welding = bool(form.get("welding"))
+    db.commit()
+    return RedirectResponse("/engineering/pdfs", status_code=302)
+
+
+@app.post("/engineering/pdfs/{pdf_id}/delete")
+def engineering_pdfs_delete(pdf_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    row = db.query(models.EngineeringPdf).filter_by(id=pdf_id).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return RedirectResponse("/engineering/pdfs", status_code=302)
 
 
 @app.get("/engineering/drawings", response_class=HTMLResponse)
