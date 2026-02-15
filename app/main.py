@@ -898,7 +898,8 @@ async def engineering_hk_mpf_edit(mpf_id: int, request: Request, db: Session = D
     if not record:
         raise HTTPException(404)
     form = await request.form()
-    record.part_id = (form.get("part_id") or "").strip()
+    if "part_id" in form:
+        record.part_id = (form.get("part_id") or "").strip()
     record.description = (form.get("description") or "").strip()
     record.qty_produced = float(form.get("qty_produced") or 0)
     record.material = (form.get("material") or "").strip()

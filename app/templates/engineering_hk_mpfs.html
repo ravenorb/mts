@@ -12,25 +12,31 @@
     <th>Actions</th>
   </tr>
   {% for row in rows %}
-  <tr>
+  <tr id="mpf-row-{{row.id}}">
     <td><a href="/engineering/hk-mpfs/{{row.id}}">{{row.mpf_filename}}</a></td>
     <td>{{row.part_id}}</td>
-    <td>{{row.description}}</td>
-    <td>{{row.qty_produced}}</td>
-    <td>{{row.material}}</td>
     <td>
-      <details>
-        <summary>Edit</summary>
-        <form method="post" action="/engineering/hk-mpfs/{{row.id}}/edit">
-          <input type="text" name="part_id" value="{{row.part_id}}" placeholder="Frame Part ID" />
-          <input type="text" name="description" value="{{row.description}}" placeholder="Description" />
-          <input type="number" step="0.01" name="qty_produced" value="{{row.qty_produced}}" placeholder="QTY Produced" />
-          <input type="text" name="material" value="{{row.material}}" placeholder="Material" />
-          <button type="submit">Save</button>
-        </form>
-      </details>
-      <form method="post" action="/engineering/hk-mpfs/{{row.id}}/delete" style="display:inline; margin-left:0.5rem;">
-        <button type="submit">Delete</button>
+      <span class="view-mode">{{row.description}}</span>
+      <input class="edit-mode hidden" type="text" name="description" value="{{row.description}}" aria-label="Description" form="mpf-edit-form-{{row.id}}" />
+    </td>
+    <td>
+      <span class="view-mode">{{row.qty_produced}}</span>
+      <input class="edit-mode hidden" type="number" step="0.01" name="qty_produced" value="{{row.qty_produced}}" aria-label="QTY Produced" form="mpf-edit-form-{{row.id}}" />
+    </td>
+    <td>
+      <span class="view-mode">{{row.material}}</span>
+      <input class="edit-mode hidden" type="text" name="material" value="{{row.material}}" aria-label="Material" form="mpf-edit-form-{{row.id}}" />
+    </td>
+    <td>
+      <form id="mpf-edit-form-{{row.id}}" method="post" action="/engineering/hk-mpfs/{{row.id}}/edit" style="display:inline;">
+        <span class="view-mode">
+          <a class="small-link" href="#" onclick="return toggleMpfEdit({{row.id}}, true)">edit</a>
+          <button type="submit" class="danger-link-btn" formaction="/engineering/hk-mpfs/{{row.id}}/delete" formmethod="post" style="margin-left:0.5rem;">delete</button>
+        </span>
+        <span class="edit-mode hidden">
+          <button type="submit" class="danger-link-btn" style="color:#001f54!important; margin-right:0.5rem;">save</button>
+          <a class="small-link" href="#" onclick="return toggleMpfEdit({{row.id}}, false)">cancel</a>
+        </span>
       </form>
     </td>
   </tr>
@@ -38,4 +44,16 @@
   <tr><td colspan="6">No parsed HK MPF files available.</td></tr>
   {% endfor %}
 </table>
+
+<script>
+  function toggleMpfEdit(rowId, editing) {
+    const row = document.getElementById(`mpf-row-${rowId}`);
+    if (!row) {
+      return false;
+    }
+    row.querySelectorAll('.view-mode').forEach((el) => el.classList.toggle('hidden', editing));
+    row.querySelectorAll('.edit-mode').forEach((el) => el.classList.toggle('hidden', !editing));
+    return false;
+  }
+</script>
 {% endblock %}
