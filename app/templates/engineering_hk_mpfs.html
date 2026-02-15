@@ -27,7 +27,7 @@
       <span class="view-mode">{{row.material}}</span>
       <input class="edit-mode hidden" type="text" name="material" value="{{row.material}}" aria-label="Material" form="mpf-edit-form-{{row.id}}" />
     </td>
-    <td>
+    <td class="actions-links">
       <form id="mpf-edit-form-{{row.id}}" method="post" action="/engineering/hk-mpfs/{{row.id}}/edit" style="display:inline;">
         <span class="view-mode">
           <a class="small-link" href="#" onclick="return toggleMpfEdit({{row.id}}, true)">edit</a>

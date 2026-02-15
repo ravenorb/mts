@@ -58,6 +58,10 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .small-link{font-size:12px;text-transform:lowercase}
 .small-link-btn{font-size:12px;padding:4px 8px}
 .danger-link-btn{background:none;border:none;color:#b91c1c!important;cursor:pointer;padding:0 2px;font-size:12px;text-decoration:underline}
+.actions-links{font-size:12px;text-transform:lowercase;white-space:nowrap}
+.actions-links a,.actions-links button{font-size:12px;text-transform:lowercase}
+.actions-links button{background:none;border:none;padding:0;color:#001f54!important;text-decoration:underline;cursor:pointer}
+.actions-links .danger-link-btn{color:#b91c1c!important}
 .station-inline-edit{display:flex;gap:8px;align-items:center}
 .hidden{display:none}
 .inline-settings-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
