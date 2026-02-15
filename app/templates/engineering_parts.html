@@ -4,6 +4,10 @@
   <div class="section-nav" aria-label="Parts actions">
     <a class="active" href="/engineering/parts">Parts</a>
   </div>
+  <form id="parts-pdf-upload-form" method="post" enctype="multipart/form-data" action="/engineering/parts/upload-pdf" style="display:none;">
+    <input type="file" id="parts-pdf-file" name="pdf_file" accept=".pdf,application/pdf" />
+  </form>
+  <button type="button" id="parts-upload-pdf-btn" class="action-btn">Upload PDF</button>
   <a class="action-btn {% if show_add %}active-tab{% endif %}" href="/engineering/parts?mode=add">Add</a>
 </div>
 
@@ -44,4 +48,21 @@
   {% endfor %}
 </div>
 {% endif %}
+
+<script>
+  const uploadPdfBtn = document.getElementById('parts-upload-pdf-btn');
+  const uploadPdfInput = document.getElementById('parts-pdf-file');
+  const uploadPdfForm = document.getElementById('parts-pdf-upload-form');
+
+  uploadPdfBtn.addEventListener('click', () => {
+    uploadPdfInput.click();
+  });
+
+  uploadPdfInput.addEventListener('change', () => {
+    if (!uploadPdfInput.files || uploadPdfInput.files.length === 0) {
+      return;
+    }
+    uploadPdfForm.submit();
+  });
+</script>
 {% endblock %}
