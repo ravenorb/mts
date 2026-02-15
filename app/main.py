@@ -812,9 +812,22 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
     all_text = "\n".join(text_pages)
 
     primary_part_id = ""
+    primary_description = ""
     dwg_match = re.search(r"DWG\s*#\s*[:\-]?\s*([A-Z0-9\-_.]+)", page2, re.IGNORECASE)
     if dwg_match:
         primary_part_id = dwg_match.group(1).strip()
+
+    if page2:
+        page2_lines = [" ".join(line.split()) for line in page2.splitlines() if line.strip()]
+        for i, line in enumerate(page2_lines):
+            if re.search(r"DWG\s*#", line, re.IGNORECASE):
+                if i + 1 < len(page2_lines):
+                    descriptor_line = page2_lines[i + 1]
+                    if primary_part_id and descriptor_line.upper().startswith(primary_part_id.upper()):
+                        primary_description = descriptor_line[len(primary_part_id):].strip(" -:")
+                    elif descriptor_line:
+                        primary_description = descriptor_line.strip()
+                break
 
     qty_produced = 0
     makes_match = re.search(r"make(?:s)?\s+(\d+)\s+frames?", all_text, re.IGNORECASE)
@@ -845,6 +858,7 @@ def parse_hk_cutsheet(pdf_bytes: bytes) -> dict:
 
     return {
         "primary_part_id": primary_part_id,
+        "primary_description": primary_description,
         "qty_produced": qty_produced,
         "sheet_size": sheet_size,
         "material": material,
@@ -974,6 +988,56 @@ async def engineering_hk_mpf_parse(mpf_file: UploadFile = File(...), pdf_file: U
     pdf_bytes = await pdf_file.read()
     parsed = parse_hk_cutsheet(pdf_bytes)
     return JSONResponse(parsed)
+
+
+@app.post("/engineering/parts/upload-pdf")
+async def engineering_parts_upload_pdf(
+    pdf_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    if not pdf_file.filename or not pdf_file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF file is required.")
+
+    pdf_bytes = await pdf_file.read()
+    parsed = parse_hk_cutsheet(pdf_bytes)
+
+    part_id = (parsed.get("primary_part_id") or "").strip()
+    if not part_id:
+        raise HTTPException(status_code=422, detail="Unable to parse part ID from PDF.")
+
+    parsed_description = (parsed.get("primary_description") or "").strip()
+
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        part = models.PartMaster(part_id=part_id, description=parsed_description, cur_rev=0)
+        db.add(part)
+        db.flush()
+    elif parsed_description:
+        part.description = parsed_description
+
+    selected_rev = max(part.cur_rev, 0)
+    existing_header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=selected_rev).first()
+    if not existing_header:
+        existing_header = models.RevisionHeader(part_id=part_id, rev_id=selected_rev)
+        db.add(existing_header)
+
+    safe_name = Path(pdf_file.filename).name
+    stored_name = f"pm_{part_id}_r{selected_rev}_{int(datetime.utcnow().timestamp())}_{safe_name}"
+    out_path = PART_FILE_DIR / stored_name
+    out_path.write_bytes(pdf_bytes)
+    existing_header.hk_file = str(out_path)
+
+    db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).delete(synchronize_session=False)
+    for component in parsed.get("components", []):
+        comp_id = (component.get("component_id") or "").strip()
+        assy_qty = component.get("assy_qty")
+        if not comp_id or assy_qty in (None, ""):
+            continue
+        db.add(models.RevisionBom(part_id=part_id, rev_id=selected_rev, comp_id=comp_id, comp_qty=float(assy_qty)))
+
+    db.commit()
+    return RedirectResponse(f"/engineering/parts/{part_id}?mode=edit&rev_id={selected_rev}", status_code=302)
 
 
 @app.get("/engineering/wj-gcode", response_class=HTMLResponse)
