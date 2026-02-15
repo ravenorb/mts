@@ -10,9 +10,11 @@
     <input type="file" id="parts-hk-machine-file" name="hk_machine_file" />
   </form>
   <button type="button" id="parts-upload-pdf-btn" class="action-btn">Upload PDF</button>
+  <button type="button" id="parts-select-mpf-btn" class="action-btn" style="display:none;">Select MPF File</button>
   <a class="action-btn {% if show_add %}active-tab{% endif %}" href="/engineering/parts?mode=add">Add</a>
   </div>
 </div>
+<p id="parts-upload-status" style="margin-top:0.5rem;"></p>
 
 {% if show_add %}
 <form class="panel-form" method="post" action="/engineering/parts">
@@ -59,6 +61,16 @@
   const uploadPdfInput = document.getElementById('parts-pdf-file');
   const uploadMachineInput = document.getElementById('parts-hk-machine-file');
   const uploadPdfForm = document.getElementById('parts-pdf-upload-form');
+  const selectMpfBtn = document.getElementById('parts-select-mpf-btn');
+  const uploadStatus = document.getElementById('parts-upload-status');
+
+  const openMachineFilePicker = () => {
+    if (typeof uploadMachineInput.showPicker === 'function') {
+      uploadMachineInput.showPicker();
+      return;
+    }
+    uploadMachineInput.click();
+  };
 
   uploadPdfBtn.addEventListener('click', () => {
     uploadPdfInput.click();
@@ -75,11 +87,19 @@
     );
 
     if (!shouldUploadMachineFile) {
+      selectMpfBtn.style.display = 'none';
+      uploadStatus.textContent = '';
       uploadPdfForm.submit();
       return;
     }
 
-    uploadMachineInput.click();
+    uploadStatus.textContent = 'Select the MPF file to continue upload.';
+    selectMpfBtn.style.display = 'inline-flex';
+    openMachineFilePicker();
+  });
+
+  selectMpfBtn.addEventListener('click', () => {
+    openMachineFilePicker();
   });
 
   uploadMachineInput.addEventListener('change', () => {
@@ -87,9 +107,11 @@
       return;
     }
     if (!uploadMachineInput.files || uploadMachineInput.files.length === 0) {
-      uploadPdfInput.value = '';
       return;
     }
+
+    selectMpfBtn.style.display = 'none';
+    uploadStatus.textContent = '';
 
     uploadPdfForm.submit();
   });
