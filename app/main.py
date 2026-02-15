@@ -1022,11 +1022,31 @@ async def engineering_parts_upload_pdf(
         existing_header = models.RevisionHeader(part_id=part_id, rev_id=selected_rev)
         db.add(existing_header)
 
-    safe_name = Path(pdf_file.filename).name
-    stored_name = f"pm_{part_id}_r{selected_rev}_{int(datetime.utcnow().timestamp())}_{safe_name}"
-    out_path = PART_FILE_DIR / stored_name
-    out_path.write_bytes(pdf_bytes)
-    existing_header.hk_file = str(out_path)
+    try:
+        from io import BytesIO
+        from pypdf import PdfReader, PdfWriter
+    except Exception as exc:  # pragma: no cover - surfaced to UI
+        raise HTTPException(status_code=500, detail="PDF parser dependency is not installed.") from exc
+
+    reader = PdfReader(BytesIO(pdf_bytes))
+    if len(reader.pages) < 2:
+        raise HTTPException(status_code=422, detail="Uploaded PDF must include at least two pages.")
+
+    hk_pdf_path = PART_FILE_DIR / f"{part_id}_hk.pdf"
+    brake_pdf_path = PART_FILE_DIR / f"{part_id}_br.pdf"
+
+    hk_writer = PdfWriter()
+    hk_writer.add_page(reader.pages[0])
+    with hk_pdf_path.open("wb") as hk_file:
+        hk_writer.write(hk_file)
+
+    brake_writer = PdfWriter()
+    brake_writer.add_page(reader.pages[1])
+    with brake_pdf_path.open("wb") as brake_file:
+        brake_writer.write(brake_file)
+
+    existing_header.hk_file = str(hk_pdf_path)
+    existing_header.cut_pdf = str(brake_pdf_path)
 
     db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=selected_rev).delete(synchronize_session=False)
     for component in parsed.get("components", []):
