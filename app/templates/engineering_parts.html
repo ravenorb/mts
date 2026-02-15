@@ -70,6 +70,15 @@
     }
 
     uploadMachineInput.value = '';
+    const shouldUploadMachineFile = window.confirm(
+      'Do you want to upload the corresponding HK laser MPF file?'
+    );
+
+    if (!shouldUploadMachineFile) {
+      uploadPdfForm.submit();
+      return;
+    }
+
     uploadMachineInput.click();
   });
 
