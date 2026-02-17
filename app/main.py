@@ -707,6 +707,25 @@ def update_inventory_for_released_pallet(db: Session, pallet: models.Pallet):
         inventory.qty_queued_to_cut += pallet_part.planned_quantity or 0
 
 
+def rollback_inventory_for_deleted_pallet(db: Session, pallet: models.Pallet):
+    was_released = db.query(models.PalletEvent).filter_by(pallet_id=pallet.id, event_type="released_to_queue").first() is not None
+    if not was_released:
+        return
+
+    pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet.id).all()
+    for pallet_part in pallet_parts:
+        revision = db.query(models.PartRevision).filter_by(id=pallet_part.part_revision_id).first()
+        if not revision:
+            continue
+        inventory = db.query(models.PartInventory).filter_by(part_id=revision.part_id).first()
+        if not inventory:
+            continue
+
+        qty = float(pallet_part.planned_quantity or 0)
+        inventory.qty_on_hand_total = max(0, float(inventory.qty_on_hand_total or 0) - qty)
+        inventory.qty_queued_to_cut = max(0, float(inventory.qty_queued_to_cut or 0) - qty)
+
+
 def ensure_order_backlog_has_pallets(db: Session, stations: list[models.Station]):
     if not stations:
         return
@@ -1305,6 +1324,9 @@ def production_pallet_delete(pallet_id: int, redirect_to: str = Form("/productio
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
         raise HTTPException(404)
+
+    clear_pallet_storage_bin(db, pallet)
+    rollback_inventory_for_deleted_pallet(db, pallet)
 
     db.query(models.Queue).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
@@ -3255,6 +3277,28 @@ def parts_inventory_page(request: Request, db: Session = Depends(get_db), user=D
     return templates.TemplateResponse("parts_inventory.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows})
 
 
+@app.post("/inventory/parts/{part_id}/edit")
+async def part_inventory_edit(part_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    part = db.query(models.Part).filter_by(id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+
+    form = await request.form()
+    inventory = db.query(models.PartInventory).filter_by(part_id=part_id).first()
+    if not inventory:
+        inventory = models.PartInventory(part_id=part_id)
+        db.add(inventory)
+        db.flush()
+
+    inventory.qty_on_hand_total = float(form.get("qty_on_hand_total") or 0)
+    inventory.qty_stored = float(form.get("qty_stored") or 0)
+    inventory.qty_queued_to_cut = float(form.get("qty_queued_to_cut") or 0)
+    inventory.qty_to_bend = float(form.get("qty_to_bend") or 0)
+    inventory.qty_to_weld = float(form.get("qty_to_weld") or 0)
+    db.commit()
+    return RedirectResponse("/inventory/parts", status_code=302)
+
+
 @app.get("/inventory/delivered-parts", response_class=HTMLResponse)
 def delivered_parts_page(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(models.DeliveredPartLot).order_by(models.DeliveredPartLot.completed_at.desc()).all()
@@ -3531,6 +3575,14 @@ def entity_delete(entity: str, item_id: int, db: Session = Depends(get_db), user
             order = db.query(models.ProductionOrder).filter_by(id=item.production_order_id).first()
             if order and order.status not in {"cancelled", "complete", "closed"}:
                 order.status = "cancelled"
+        if entity == "pallets":
+            clear_pallet_storage_bin(db, item)
+            rollback_inventory_for_deleted_pallet(db, item)
+            db.query(models.Queue).filter_by(pallet_id=item.id).delete(synchronize_session=False)
+            db.query(models.PalletEvent).filter_by(pallet_id=item.id).delete(synchronize_session=False)
+            db.query(models.PalletPart).filter_by(pallet_id=item.id).delete(synchronize_session=False)
+            db.query(models.PalletStationRoute).filter_by(pallet_id=item.id).delete(synchronize_session=False)
+            db.query(models.PalletRevision).filter_by(pallet_id=item.id).delete(synchronize_session=False)
         db.delete(item)
         db.commit()
     return RedirectResponse(f"/entity/{entity}", status_code=302)
