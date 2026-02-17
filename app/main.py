@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func, or_, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
@@ -3032,7 +3032,35 @@ def inventory_dashboard(request: Request, db: Session = Depends(get_db), user=De
 @app.get("/inventory/locations", response_class=HTMLResponse)
 def storage_location_list(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(models.StorageLocation).order_by(models.StorageLocation.id.asc()).all()
-    return templates.TemplateResponse("storage_locations.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "rows": rows})
+    used_bins_by_location = {
+        location_id: used_bins
+        for location_id, used_bins in (
+            db.query(
+                models.StorageBin.storage_location_id,
+                func.count(models.StorageBin.id),
+            )
+            .filter(
+                or_(
+                    models.StorageBin.qty > 0,
+                    func.trim(func.coalesce(models.StorageBin.location_id, "")) != "",
+                    func.trim(func.coalesce(models.StorageBin.component_id, "")) != "",
+                )
+            )
+            .group_by(models.StorageBin.storage_location_id)
+            .all()
+        )
+    }
+    return templates.TemplateResponse(
+        "storage_locations.html",
+        {
+            "request": request,
+            "user": user,
+            "top_nav": TOP_NAV,
+            "entity_groups": ENTITY_GROUPS,
+            "rows": rows,
+            "used_bins_by_location": used_bins_by_location,
+        },
+    )
 
 
 @app.post("/inventory/locations/add")
@@ -3048,7 +3076,7 @@ async def storage_location_add(request: Request, db: Session = Depends(get_db), 
     db.commit()
     db.refresh(location)
     ensure_storage_bins(db, location)
-    return RedirectResponse("/inventory/locations", status_code=302)
+    return RedirectResponse("/inventory/locations", status_code=303)
 
 
 @app.get("/inventory/locations/{location_id}", response_class=HTMLResponse)
@@ -3084,7 +3112,7 @@ async def storage_location_edit(location_id: int, request: Request, db: Session 
     location.bin_count = int(form.get("bin_count") or 1)
     db.commit()
     ensure_storage_bins(db, location)
-    return RedirectResponse("/inventory/locations", status_code=302)
+    return RedirectResponse("/inventory/locations", status_code=303)
 
 
 @app.post("/inventory/locations/{location_id}/delete")
