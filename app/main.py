@@ -508,6 +508,7 @@ def ensure_order_backlog_has_pallets(db: Session, stations: list[models.Station]
 
     missing_orders = (
         db.query(models.ProductionOrder)
+        .filter(models.ProductionOrder.status.notin_(["cancelled", "complete", "closed"]))
         .filter(models.ProductionOrder.id.notin_(existing_order_ids) if existing_order_ids else text("1=1"))
         .order_by(models.ProductionOrder.created_at.asc(), models.ProductionOrder.id.asc())
         .all()
@@ -3058,6 +3059,10 @@ def entity_delete(entity: str, item_id: int, db: Session = Depends(get_db), user
     model = MODEL_MAP.get(entity)
     item = db.query(model).filter_by(id=item_id).first()
     if item:
+        if entity == "pallets" and item.production_order_id:
+            order = db.query(models.ProductionOrder).filter_by(id=item.production_order_id).first()
+            if order and order.status not in {"cancelled", "complete", "closed"}:
+                order.status = "cancelled"
         db.delete(item)
         db.commit()
     return RedirectResponse(f"/entity/{entity}", status_code=302)
