@@ -431,6 +431,13 @@ def ensure_pallet_schema(db: Session):
     db.commit()
 
 
+def ensure_pallet_parts_schema(db: Session):
+    pallet_part_columns = {row[1] for row in db.execute(text("PRAGMA table_info(pallet_parts)"))}
+    if "external_quantity_needed" not in pallet_part_columns:
+        db.execute(text("ALTER TABLE pallet_parts ADD COLUMN external_quantity_needed FLOAT DEFAULT 0"))
+    db.commit()
+
+
 def ensure_default_stations(db: Session) -> list[models.Station]:
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     if stations:
@@ -452,6 +459,26 @@ def ensure_default_stations(db: Session) -> list[models.Station]:
     db.commit()
     return db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
 
+
+
+
+def get_part_component_requirements(db: Session, part_id: str) -> list[dict]:
+    if not part_id:
+        return []
+    part_master = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part_master:
+        return []
+    bom_lines = db.query(models.RevisionBom).filter_by(part_id=part_id, rev_id=part_master.cur_rev).order_by(models.RevisionBom.id.asc()).all()
+    components: list[dict] = []
+    for line in bom_lines:
+        comp_id = (line.comp_id or '').strip()
+        if not comp_id:
+            continue
+        components.append({
+            'component_id': comp_id,
+            'component_qty': float(line.comp_qty or 0),
+        })
+    return components
 
 def get_part_station_routes(db: Session, part_number: str) -> list[models.Station]:
     if not part_number:
@@ -612,6 +639,7 @@ def startup():
     db = next(get_db())
     ensure_station_schema(db)
     ensure_pallet_schema(db)
+    ensure_pallet_parts_schema(db)
     ensure_employee_auth_schema(db)
     migrate_users_to_employees(db)
     create_default_admin(db)
@@ -659,6 +687,7 @@ def parse_pallet_component_list(component_list_json: str | None) -> list[dict]:
         parsed.append({
             "component_id": (item.get("component_id") or "").strip(),
             "expected_quantity": item.get("expected_quantity", 0),
+            "external_quantity_needed": item.get("external_quantity_needed", 0),
         })
     return parsed
 
@@ -821,6 +850,7 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
         station_flags = {station_name: (station_name in assigned_stations) for station_name in station_names}
         part_rows.append({
             "expected_qty": pallet_part.planned_quantity,
+            "external_qty_needed": pallet_part.external_quantity_needed,
             "component_id": component_id,
             "scrap_qty": pallet_part.scrap_quantity,
             "station_flags": station_flags,
@@ -852,6 +882,7 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
         station_flags = {station_name: (station_name in assigned_stations) for station_name in station_names}
         new_row = {
             "expected_qty": expected_qty,
+            "external_qty_needed": component.get("external_quantity_needed", 0),
             "component_id": component_id,
             "scrap_qty": 0,
             "station_flags": station_flags,
@@ -873,6 +904,60 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
         "part_rows": component_rows,
         "station_names": station_names,
     })
+
+
+@app.post("/production/pallet/{pallet_id}/edit")
+async def pallet_edit_save(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not pallet:
+        raise HTTPException(404)
+
+    form = await request.form()
+    component_ids = form.getlist("component_id")
+    expected_qtys = form.getlist("expected_qty")
+    external_qtys = form.getlist("external_qty_needed")
+    scrap_qtys = form.getlist("scrap_qty")
+
+    component_snapshot: list[dict] = []
+    db.query(models.PalletPart).filter_by(pallet_id=pallet.id).delete(synchronize_session=False)
+
+    frame_revision = ensure_current_part_revision(db, pallet.frame_part_number, user.username) if pallet.frame_part_number else None
+    if frame_revision:
+        db.add(models.PalletPart(
+            pallet_id=pallet.id,
+            part_revision_id=frame_revision.id,
+            planned_quantity=pallet.expected_quantity,
+            external_quantity_needed=0,
+            actual_quantity=0,
+            scrap_quantity=0,
+        ))
+
+    for index, component_id_raw in enumerate(component_ids):
+        component_id = (component_id_raw or "").strip()
+        if not component_id or component_id == (pallet.frame_part_number or ""):
+            continue
+        expected_qty = float(expected_qtys[index] or 0) if index < len(expected_qtys) else 0
+        external_qty_needed = float(external_qtys[index] or 0) if index < len(external_qtys) else 0
+        scrap_qty = float(scrap_qtys[index] or 0) if index < len(scrap_qtys) else 0
+        ensure_inventory_component_exists(db, component_id)
+        component_revision = ensure_current_part_revision(db, component_id, user.username)
+        db.add(models.PalletPart(
+            pallet_id=pallet.id,
+            part_revision_id=component_revision.id,
+            planned_quantity=expected_qty,
+            external_quantity_needed=external_qty_needed,
+            actual_quantity=0,
+            scrap_quantity=scrap_qty,
+        ))
+        component_snapshot.append({
+            "component_id": component_id,
+            "expected_quantity": expected_qty,
+            "external_quantity_needed": external_qty_needed,
+        })
+
+    pallet.component_list_json = json.dumps(component_snapshot)
+    db.commit()
+    return RedirectResponse(f"/production/pallet/{pallet.id}/edit", status_code=302)
 
 
 @app.post("/production/pallet/{pallet_id}/move")
@@ -969,27 +1054,53 @@ def production_create_order(
     db.refresh(pallet)
 
     details = db.query(models.MpfDetail).filter_by(mpf_master_id=mpf.id).order_by(models.MpfDetail.id.asc()).all()
+    bom_components = get_part_component_requirements(db, frame_part_id)
     component_snapshot = []
     all_part_revisions = [
         {
             "part_revision_id": revision.id,
             "planned_quantity": expected_quantity,
+            "external_quantity_needed": 0,
         }
     ]
+
+    mpf_component_ids: set[str] = set()
     for detail in details:
         component_id = (detail.component_id or "").strip()
         expected_component_qty = detail.sheet_qty * sheet_count
+        if not component_id:
+            continue
+        mpf_component_ids.add(component_id)
         component_snapshot.append({
             "component_id": component_id,
             "qty_per_sheet": detail.sheet_qty,
             "expected_quantity": expected_component_qty,
+            "external_quantity_needed": 0,
         })
-        if component_id:
-            component_revision = ensure_current_part_revision(db, component_id, user.username)
-            all_part_revisions.append({
-                "part_revision_id": component_revision.id,
-                "planned_quantity": expected_component_qty,
-            })
+        component_revision = ensure_current_part_revision(db, component_id, user.username)
+        all_part_revisions.append({
+            "part_revision_id": component_revision.id,
+            "planned_quantity": expected_component_qty,
+            "external_quantity_needed": 0,
+        })
+
+    for component in bom_components:
+        component_id = component["component_id"]
+        if component_id in mpf_component_ids:
+            continue
+        external_qty_needed = expected_quantity * float(component.get("component_qty") or 0)
+        component_snapshot.append({
+            "component_id": component_id,
+            "qty_per_sheet": 0,
+            "expected_quantity": 0,
+            "external_quantity_needed": external_qty_needed,
+        })
+        component_revision = ensure_current_part_revision(db, component_id, user.username)
+        all_part_revisions.append({
+            "part_revision_id": component_revision.id,
+            "planned_quantity": 0,
+            "external_quantity_needed": external_qty_needed,
+        })
 
     pallet.component_list_json = json.dumps(component_snapshot)
 
@@ -998,6 +1109,7 @@ def production_create_order(
             pallet_id=pallet.id,
             part_revision_id=part_item["part_revision_id"],
             planned_quantity=part_item["planned_quantity"],
+            external_quantity_needed=part_item.get("external_quantity_needed", 0),
             actual_quantity=0,
             scrap_quantity=0,
         ))

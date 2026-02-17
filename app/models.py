@@ -302,6 +302,7 @@ class PalletPart(Base):
     pallet_id: Mapped[int] = mapped_column(ForeignKey("pallets.id"))
     part_revision_id: Mapped[int] = mapped_column(ForeignKey("part_revisions.id"))
     planned_quantity: Mapped[float] = mapped_column(Float)
+    external_quantity_needed: Mapped[float] = mapped_column(Float, default=0)
     actual_quantity: Mapped[float] = mapped_column(Float, default=0)
     scrap_quantity: Mapped[float] = mapped_column(Float, default=0)
 
