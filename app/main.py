@@ -608,8 +608,15 @@ def get_pallet_part_rows(db: Session, pallet: models.Pallet) -> list[dict]:
 
 
 def ensure_pallet_station_routing(db: Session, pallet: models.Pallet, fallback_station_id: int | None = None):
-    existing = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id).count()
-    if existing:
+    existing_rows = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id).order_by(models.PalletStationRoute.sequence_no.asc()).all()
+    if existing_rows:
+        for row in existing_rows:
+            if row.qty_completed is None:
+                row.qty_completed = 0
+            if row.qty_scrap is None:
+                row.qty_scrap = 0
+            if not (row.status or "").strip():
+                row.status = "staged"
         return
 
     route_stations = get_part_station_routes(db, pallet.frame_part_number or "")
@@ -980,7 +987,7 @@ def build_component_quantities(db: Session, frame_part_id: str, expected_quantit
             "expected_quantity": 0.0,
             "qty_needed": 0.0,
         })
-        existing["qty_needed"] = float(component.get("component_qty") or 0) * float(expected_quantity or 0)
+        existing["qty_needed"] = float(component.get("component_qty") or 0) * float(sheet_count or 0)
 
     return [component_map[key] for key in sorted(component_map.keys())]
 
@@ -1325,6 +1332,8 @@ def production_pallet_delete(pallet_id: int, redirect_to: str = Form("/productio
     if not pallet:
         raise HTTPException(404)
 
+    linked_order = db.query(models.ProductionOrder).filter_by(id=pallet.production_order_id).first() if pallet.production_order_id else None
+
     clear_pallet_storage_bin(db, pallet)
     rollback_inventory_for_deleted_pallet(db, pallet)
 
@@ -1333,6 +1342,11 @@ def production_pallet_delete(pallet_id: int, redirect_to: str = Form("/productio
     db.query(models.PalletPart).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.query(models.PalletStationRoute).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.query(models.PalletRevision).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
+
+    if linked_order:
+        pallet.production_order_id = None
+        db.delete(linked_order)
+
     db.delete(pallet)
     db.commit()
     return RedirectResponse(redirect_to if redirect_to.startswith("/") else "/production?tab=active", status_code=302)
@@ -2506,7 +2520,7 @@ def station_start_next(station_id: int, db: Session = Depends(get_db), user=Depe
             pallet.current_station_id = station_id
             route_row = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id, station_id=station_id).first()
             if route_row:
-                route_row.status = "in_progress"
+                route_row.status = "in-process"
                 route_row.location_id = f"S{station_id}"
             db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="started", quantity=0, recorded_by=user.username, notes="Started next queued pallet"))
         db.commit()
@@ -2582,33 +2596,20 @@ async def station_complete_pallet_submit(station_id: int, request: Request, db: 
         if revision:
             pallet_part = db.query(models.PalletPart).filter_by(pallet_id=pallet.id, part_revision_id=revision.id).first()
             if pallet_part:
-                pallet_part.actual_quantity = qty_completed
+                if station_id == 1:
+                    pallet_part.actual_quantity = float(pallet_part.actual_quantity or 0) + qty_completed
+                else:
+                    pallet_part.actual_quantity = qty_completed
                 pallet_part.scrap_quantity = qty_scrap
 
     route_row = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id, station_id=station_id).first()
     if route_row:
-        route_row.qty_completed = total_completed
-        route_row.qty_scrap = sum(float(v or 0) for v in qty_scrap_list)
         route_row.status = "complete"
         route_row.location_id = f"S{station_id}"
 
     active_queue = db.query(models.Queue).filter_by(station_id=station_id, pallet_id=pallet.id, status="in_progress").first()
     if active_queue:
         active_queue.status = "done"
-
-    if route_row and route_row.sequence_no == 1:
-        for idx, component_id_raw in enumerate(component_ids):
-            component_id = (component_id_raw or "").strip()
-            qty_completed = float(qty_completed_list[idx] or 0) if idx < len(qty_completed_list) else 0
-            if not component_id:
-                continue
-            revision = db.query(models.PartRevision).join(models.Part, models.Part.id == models.PartRevision.part_id).filter(
-                models.Part.part_number == component_id
-            ).order_by(models.PartRevision.is_current.desc(), models.PartRevision.id.desc()).first()
-            if revision:
-                pallet_part = db.query(models.PalletPart).filter_by(pallet_id=pallet.id, part_revision_id=revision.id).first()
-                if pallet_part:
-                    pallet_part.actual_quantity = qty_completed
 
     expected_total = float(pallet.expected_quantity or 0)
     spawn_leftover = (form.get("spawn_leftover") or "") == "yes"
