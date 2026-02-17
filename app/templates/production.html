@@ -57,6 +57,39 @@
 </table>
 {% endif %}
 
+<h3>Debug: Full Queue</h3>
+<table>
+  <tr>
+    <th>Station ID</th><th>Pallet ID</th><th>Queue Pos</th><th>Entered At</th>
+  </tr>
+  {% for queue_row in all_queue_rows %}
+  <tr>
+    <td>{{queue_row.station_id}}</td>
+    <td>{{queue_row.pallet_id}}</td>
+    <td>{{queue_row.queue_position}}</td>
+    <td>{{queue_row.entered_at}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h3>Debug: Full Pallet List</h3>
+<table>
+  <tr>
+    <th>ID</th><th>Pallet</th><th>Status</th><th>Frame Part</th><th>Expected Qty</th><th>Current Station</th><th>Created</th>
+  </tr>
+  {% for pallet in active_pallets %}
+  <tr>
+    <td>{{pallet.id}}</td>
+    <td>{{pallet.pallet_code}}</td>
+    <td>{{pallet.status}}</td>
+    <td>{{pallet.frame_part_number or '-'}}</td>
+    <td>{{pallet.expected_quantity or '-'}}</td>
+    <td>{{pallet.current_station_id or '-'}}</td>
+    <td>{{pallet.created_at}}</td>
+  </tr>
+  {% endfor %}
+</table>
+
 <dialog id="create-order-modal" class="modal-dialog">
   <form method="post" action="/production/create-order" class="panel-form" id="create-order-form">
     <h3>Create Production Order</h3>
