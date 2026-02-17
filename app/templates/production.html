@@ -1,32 +1,17 @@
 {% extends 'base.html' %}
 {% block content %}
 <div class="page-toolbar">
-  <h2>Production</h2>
   <button id="open-order-modal" type="button">Create Order</button>
 </div>
 
-<form method="get" action="/production" class="scan-form">
-  <input type="hidden" name="tab" value="{{tab}}" />
-  <label>Scan QR OR type pallet</label>
-  <input name="q" value="{{query}}" placeholder="P-10452 or pallet id" autofocus />
-  <button type="submit">Find</button>
-</form>
-
-<div class="action-row" style="margin:12px 0;">
-  <a class="action-btn {% if tab == 'active' %}secondary{% endif %}" href="/production?tab=active">Active Pallets</a>
+<div class="page-toolbar maintenance-submenu-row">
+  <div class="action-row">
+  <a class="action-btn secondary {% if tab == 'active' %}active-tab{% endif %}" href="/production?tab=active">Active Pallets</a>
   {% for station in stations %}
-  <a class="action-btn {% if tab == ('station-' ~ station.id) %}secondary{% endif %}" href="/production?tab=station-{{station.id}}">{{station.station_name}}</a>
+  <a class="action-btn secondary {% if tab == ('station-' ~ station.id) %}active-tab{% endif %}" href="/production?tab=station-{{station.id}}">{{station.station_name}}</a>
   {% endfor %}
+  </div>
 </div>
-
-{% if found %}
-<div class="card">
-  <div class="label">Pallet found</div>
-  <a href="/production/pallet/{{found.id}}" class="action-btn">Open {{found.pallet_code}}</a>
-</div>
-{% elif query %}
-<div class="form-error-banner">No pallet found for "{{query}}". Check scan quality or code format.</div>
-{% endif %}
 
 {% if tab == 'active' %}
 <h3>All Active Pallets</h3>
@@ -56,12 +41,17 @@
   </tr>
   {% for row in station_queue %}
   <tr>
-    <td>{{row.queue.queue_position}}</td>
+    <td>{{row.queue.queue_position if row.queue else '-'}}</td>
     <td>{{row.pallet.pallet_code if row.pallet else '-'}}</td>
-    <td>{{row.queue.status}}</td>
+    <td>{{row.pallet.status if row.pallet else '-'}}</td>
     <td>{{row.pallet.frame_part_number if row.pallet else '-'}}</td>
     <td>{{row.pallet.expected_quantity if row.pallet else '-'}}</td>
-    <td>{% if row.pallet %}<a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}">Open</a>{% endif %}</td>
+    <td>
+      {% if row.pallet %}
+      <a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}">Open</a>
+      <a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}/edit">Edit Pallet</a>
+      {% endif %}
+    </td>
   </tr>
   {% endfor %}
 </table>

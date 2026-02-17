@@ -610,7 +610,7 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
 
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    active_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).all()
+    active_pallets = db.query(models.Pallet).order_by(models.Pallet.created_at.desc()).all()
 
     selected_station = None
     station_queue = []
@@ -620,10 +620,18 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
             selected_station = next((station for station in stations if station.id == int(station_id)), None)
     if selected_station:
         queue_rows = db.query(models.Queue).filter_by(station_id=selected_station.id).order_by(models.Queue.queue_position.asc()).all()
-        for row in queue_rows:
+        queue_by_pallet_id = {row.pallet_id: row for row in queue_rows}
+        pallets_at_station = (
+            db.query(models.Pallet)
+            .filter(models.Pallet.current_station_id == selected_station.id)
+            .order_by(models.Pallet.created_at.desc())
+            .all()
+        )
+        for pallet_at_station in pallets_at_station:
+            queue_row = queue_by_pallet_id.get(pallet_at_station.id)
             station_queue.append({
-                "queue": row,
-                "pallet": db.query(models.Pallet).filter_by(id=row.pallet_id).first(),
+                "queue": queue_row,
+                "pallet": pallet_at_station,
             })
 
     frame_parts_from_mpf = {
