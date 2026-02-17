@@ -319,6 +319,20 @@ class PalletEvent(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
 
 
+class PalletStationRoute(Base):
+    __tablename__ = "pallet_station_routes"
+    __table_args__ = (UniqueConstraint("pallet_id", "sequence_no", name="uq_pallet_station_sequence"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pallet_id: Mapped[int] = mapped_column(ForeignKey("pallets.id"))
+    sequence_no: Mapped[int] = mapped_column(Integer, default=1)
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
+    qty_completed: Mapped[float] = mapped_column(Float, default=0)
+    qty_scrap: Mapped[float] = mapped_column(Float, default=0)
+    status: Mapped[str] = mapped_column(String(40), default="staged")
+    location_id: Mapped[str] = mapped_column(String(20), default="00")
+
+
 class StationMaintenanceTask(Base):
     __tablename__ = "station_maintenance_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
