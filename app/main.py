@@ -428,6 +428,8 @@ def ensure_pallet_schema(db: Session):
         db.execute(text("ALTER TABLE pallets ADD COLUMN sheet_count FLOAT DEFAULT 0"))
     if "component_list_json" not in pallet_columns:
         db.execute(text("ALTER TABLE pallets ADD COLUMN component_list_json TEXT DEFAULT '[]'"))
+    if "storage_bin_id" not in pallet_columns:
+        db.execute(text("ALTER TABLE pallets ADD COLUMN storage_bin_id INTEGER"))
     db.commit()
 
 
@@ -589,6 +591,84 @@ def ensure_pallet_station_routing(db: Session, pallet: models.Pallet, fallback_s
             status="staged",
             location_id="00",
         ))
+
+
+def station_label(station: models.Station | None) -> str:
+    if not station:
+        return "-"
+    return f"S{station.id} - {station.station_name}"
+
+
+def get_available_pallet_bins(db: Session, include_bin_id: int | None = None, hk_only: bool = False, exclude_hk: bool = False) -> list[models.StorageBin]:
+    query = (
+        db.query(models.StorageBin)
+        .join(models.StorageLocation, models.StorageBin.storage_location_id == models.StorageLocation.id)
+        .filter(models.StorageLocation.pallet_storage.is_(True))
+    )
+    if hk_only:
+        query = query.filter(func.lower(models.StorageLocation.location_description).like("%hk queue%"))
+    if exclude_hk:
+        query = query.filter(~func.lower(models.StorageLocation.location_description).like("%hk queue%"))
+
+    bins = query.order_by(models.StorageBin.storage_location_id.asc(), models.StorageBin.shelf_id.asc(), models.StorageBin.bin_id.asc()).all()
+    return [
+        b for b in bins
+        if not (b.pallet_id or "").strip() or (include_bin_id and b.id == include_bin_id)
+    ]
+
+
+def clear_pallet_storage_bin(db: Session, pallet: models.Pallet):
+    db.query(models.StorageBin).filter(models.StorageBin.pallet_id == pallet.pallet_code).update({models.StorageBin.pallet_id: ""}, synchronize_session=False)
+
+
+def assign_pallet_to_storage_bin(db: Session, pallet: models.Pallet, storage_bin: models.StorageBin):
+    clear_pallet_storage_bin(db, pallet)
+    storage_bin.pallet_id = pallet.pallet_code
+    pallet.storage_bin_id = storage_bin.id
+    pallet.current_station_id = None
+
+
+def pallet_location_label(db: Session, pallet: models.Pallet) -> str:
+    if pallet.storage_bin_id:
+        storage_bin = db.query(models.StorageBin).filter_by(id=pallet.storage_bin_id).first()
+        if storage_bin:
+            location = db.query(models.StorageLocation).filter_by(id=storage_bin.storage_location_id).first()
+            location_name = location.location_description if location else f"Location {storage_bin.storage_location_id}"
+            return f"{location_name} (L{storage_bin.storage_location_id}-S{storage_bin.shelf_id}-B{storage_bin.bin_id})"
+    if pallet.current_station_id:
+        station = db.query(models.Station).filter_by(id=pallet.current_station_id).first()
+        return station_label(station)
+    return "Unassigned"
+
+
+def update_inventory_for_released_pallet(db: Session, pallet: models.Pallet):
+    if pallet.mpf_master_id and pallet.sheet_count > 0:
+        mpf = db.query(models.MpfMaster).filter_by(id=pallet.mpf_master_id).first()
+        if mpf:
+            parsed_sheet = parse_sheet_size(mpf.sheet_size)
+            if parsed_sheet:
+                width, length = parsed_sheet
+                material_row = db.query(models.RawMaterial).filter(
+                    models.RawMaterial.gauge == mpf.material,
+                    ((models.RawMaterial.width == width) & (models.RawMaterial.length == length)) |
+                    ((models.RawMaterial.width == length) & (models.RawMaterial.length == width)),
+                ).first()
+                if not material_row or material_row.qty_on_hand < pallet.sheet_count:
+                    raise HTTPException(422, "Not enough raw material sheets on hand to release this pallet")
+                material_row.qty_on_hand -= pallet.sheet_count
+
+    pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet.id).all()
+    for pallet_part in pallet_parts:
+        revision = db.query(models.PartRevision).filter_by(id=pallet_part.part_revision_id).first()
+        if not revision:
+            continue
+        inventory = db.query(models.PartInventory).filter_by(part_id=revision.part_id).first()
+        if not inventory:
+            inventory = models.PartInventory(part_id=revision.part_id)
+            db.add(inventory)
+            db.flush()
+        inventory.qty_on_hand_total += pallet_part.planned_quantity or 0
+        inventory.qty_queued_to_cut += pallet_part.planned_quantity or 0
 
 
 def ensure_order_backlog_has_pallets(db: Session, stations: list[models.Station]):
@@ -979,7 +1059,8 @@ def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db
     route_rows = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet_id).order_by(models.PalletStationRoute.sequence_no.asc()).all()
     events = db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).order_by(models.PalletEvent.recorded_at.asc()).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
-    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "part_rows": part_rows, "route_rows": route_rows, "events": events, "stations": stations, "errors": {}})
+    available_bins = get_available_pallet_bins(db, include_bin_id=pallet.storage_bin_id)
+    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "part_rows": part_rows, "route_rows": route_rows, "events": events, "stations": stations, "available_bins": available_bins, "station_label": station_label, "location_label": pallet_location_label(db, pallet), "errors": {}})
 
 
 @app.get("/production/pallet/{pallet_id}/edit", response_class=HTMLResponse)
@@ -1070,14 +1151,76 @@ async def pallet_edit_save(pallet_id: int, request: Request, db: Session = Depen
 
 
 @app.post("/production/pallet/{pallet_id}/move")
-def pallet_move(pallet_id: int, station_id: int = Form(...), notes: str = Form(""), db: Session = Depends(get_db), user=Depends(require_login)):
+def pallet_move(
+    pallet_id: int,
+    destination_type: str = Form("station"),
+    destination_id: int | None = Form(None),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
-    station = db.query(models.Station).filter_by(id=station_id).first()
-    if not pallet or not station:
+    if not pallet:
         raise HTTPException(404)
-    pallet.current_station_id = station_id
+
+    if destination_type == "storage_bin":
+        if not destination_id:
+            raise HTTPException(422, "Storage bin is required")
+        storage_bin = db.query(models.StorageBin).filter_by(id=destination_id).first()
+        if not storage_bin:
+            raise HTTPException(404, "Storage bin not found")
+        location = db.query(models.StorageLocation).filter_by(id=storage_bin.storage_location_id).first()
+        if not location or not location.pallet_storage:
+            raise HTTPException(422, "Selected bin is not a pallet storage location")
+        occupied_by_other = (storage_bin.pallet_id or "").strip() and storage_bin.id != pallet.storage_bin_id
+        if occupied_by_other:
+            raise HTTPException(422, "Selected bin is occupied")
+        assign_pallet_to_storage_bin(db, pallet, storage_bin)
+        pallet.status = "staged"
+        location_note = f"Moved to {location.location_description} S{storage_bin.shelf_id} B{storage_bin.bin_id}"
+        db.add(models.PalletEvent(pallet_id=pallet.id, station_id=None, event_type="moved", quantity=0, recorded_by=user.username, notes=notes or location_note))
+    else:
+        if not destination_id:
+            raise HTTPException(422, "Station is required")
+        station = db.query(models.Station).filter_by(id=destination_id).first()
+        if not station:
+            raise HTTPException(404)
+        clear_pallet_storage_bin(db, pallet)
+        pallet.storage_bin_id = None
+        pallet.current_station_id = destination_id
+        pallet.status = "in_progress"
+        db.add(models.PalletEvent(pallet_id=pallet.id, station_id=destination_id, event_type="moved", quantity=0, recorded_by=user.username, notes=notes or f"Moved to {station.station_name}"))
+
+    db.commit()
+    return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
+
+
+@app.post("/production/pallet/{pallet_id}/release")
+def pallet_release_to_hk_queue(pallet_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not pallet:
+        raise HTTPException(404)
+
+    already_released = db.query(models.PalletEvent).filter_by(pallet_id=pallet.id, event_type="released_to_hk_queue").first()
+    if already_released:
+        raise HTTPException(422, "Pallet already released to HK Queue")
+
+    hk_bin = next(iter(get_available_pallet_bins(db, include_bin_id=pallet.storage_bin_id, hk_only=True)), None)
+    if not hk_bin:
+        raise HTTPException(422, "No open pallet bin found in HK Queue")
+
+    assign_pallet_to_storage_bin(db, pallet, hk_bin)
+    update_inventory_for_released_pallet(db, pallet)
     pallet.status = "in_progress"
-    db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="moved", quantity=0, recorded_by=user.username, notes=notes or f"Moved to {station.station_name}"))
+    location = db.query(models.StorageLocation).filter_by(id=hk_bin.storage_location_id).first()
+    db.add(models.PalletEvent(
+        pallet_id=pallet.id,
+        station_id=None,
+        event_type="released_to_hk_queue",
+        quantity=pallet.expected_quantity or 0,
+        recorded_by=user.username,
+        notes=f"Released pallet to {location.location_description} S{hk_bin.shelf_id} B{hk_bin.bin_id}",
+    ))
     db.commit()
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
@@ -1151,10 +1294,8 @@ def production_create_order(
                 ((models.RawMaterial.width == length) & (models.RawMaterial.length == width)),
             ).first()
 
-        if material_row:
-            if material_row.qty_on_hand < sheet_count:
-                raise HTTPException(422, "Not enough raw material sheets on hand")
-            material_row.qty_on_hand -= sheet_count
+        if material_row and material_row.qty_on_hand < sheet_count:
+            raise HTTPException(422, "Not enough raw material sheets on hand")
 
         order = models.ProductionOrder(part_revision_id=revision.id, quantity_ordered=expected_quantity, status="planned")
         db.add(order)
@@ -1171,12 +1312,17 @@ def production_create_order(
             expected_quantity=expected_quantity,
             sheet_count=sheet_count,
             status="staged",
-            current_station_id=first_station.id if first_station else None,
+            current_station_id=None,
             created_by=user.username,
         )
         db.add(pallet)
         db.flush()
         pallet.pallet_code = f"P-{int(datetime.utcnow().timestamp())}-{order.id}"
+
+        empty_storage_bin = next(iter(get_available_pallet_bins(db, exclude_hk=True)), None)
+        if not empty_storage_bin:
+            raise HTTPException(422, "No available pallet storage bins found for new orders")
+        assign_pallet_to_storage_bin(db, pallet, empty_storage_bin)
 
         component_snapshot = build_component_quantities(db, frame_part_id, expected_quantity, sheet_count, mpf.id)
         all_part_revisions = [
@@ -1226,7 +1372,7 @@ def production_create_order(
             event_type="created",
             quantity=expected_quantity,
             recorded_by=user.username,
-            notes=f"Order created from HK MPF {mpf.mpf_filename}",
+            notes=f"Order created from HK MPF {mpf.mpf_filename} and staged to pallet storage bin {empty_storage_bin.id}",
         ))
 
         route_station_ids: list[int] = []

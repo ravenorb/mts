@@ -26,7 +26,7 @@
     <td>{{pallet.status}}</td>
     <td>{{pallet.frame_part_number or '-'}}</td>
     <td>{{pallet.expected_quantity or '-'}}</td>
-    <td>{{pallet.current_station_id or '-'}}</td>
+    <td>{{ ("S" ~ pallet.current_station_id) if pallet.current_station_id else "BIN" if pallet.storage_bin_id else "-" }}</td>
     <td>
       <a class="small-link-btn" href="/production/pallet/{{pallet.id}}">Open</a>
       <a class="small-link-btn" href="/production/pallet/{{pallet.id}}/edit">Edit Pallet</a>
