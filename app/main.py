@@ -687,9 +687,36 @@ def parse_pallet_component_list(component_list_json: str | None) -> list[dict]:
         parsed.append({
             "component_id": (item.get("component_id") or "").strip(),
             "expected_quantity": item.get("expected_quantity", 0),
-            "external_quantity_needed": item.get("external_quantity_needed", 0),
+            "qty_needed": item.get("qty_needed", item.get("external_quantity_needed", 0)),
         })
     return parsed
+
+
+def build_component_quantities(db: Session, frame_part_id: str, expected_quantity: float, sheet_count: float, mpf_master_id: int) -> list[dict]:
+    component_map: dict[str, dict] = {}
+
+    details = db.query(models.MpfDetail).filter_by(mpf_master_id=mpf_master_id).order_by(models.MpfDetail.id.asc()).all()
+    for detail in details:
+        component_id = (detail.component_id or "").strip()
+        if not component_id:
+            continue
+        component_map[component_id] = {
+            "component_id": component_id,
+            "expected_quantity": float(detail.sheet_qty or 0) * float(sheet_count or 0),
+            "qty_needed": 0.0,
+        }
+
+    bom_components = get_part_component_requirements(db, frame_part_id)
+    for component in bom_components:
+        component_id = component["component_id"]
+        existing = component_map.setdefault(component_id, {
+            "component_id": component_id,
+            "expected_quantity": 0.0,
+            "qty_needed": 0.0,
+        })
+        existing["qty_needed"] = float(component.get("component_qty") or 0) * float(expected_quantity or 0)
+
+    return [component_map[key] for key in sorted(component_map.keys())]
 
 
 def build_station_queue_cards(db: Session, stations: list[models.Station]) -> list[dict]:
@@ -834,9 +861,6 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
     if not pallet:
         raise HTTPException(404)
 
-    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
-    station_names = [station.station_name for station in stations]
-
     part_rows = []
     pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).order_by(models.PalletPart.id.asc()).all()
     for pallet_part in pallet_parts:
@@ -846,14 +870,12 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
             part_row = db.query(models.Part).filter_by(id=revision.part_id).first()
             component_id = part_row.part_number if part_row else ""
 
-        assigned_stations = {station.station_name for station in get_part_station_routes(db, component_id)}
-        station_flags = {station_name: (station_name in assigned_stations) for station_name in station_names}
         part_rows.append({
             "expected_qty": pallet_part.planned_quantity,
-            "external_qty_needed": pallet_part.external_quantity_needed,
+            "qty_needed": pallet_part.external_quantity_needed,
+            "current_qty": pallet_part.actual_quantity,
             "component_id": component_id,
             "scrap_qty": pallet_part.scrap_quantity,
-            "station_flags": station_flags,
         })
 
     # Show component-level quantities for pallets created from HK MPF data.
@@ -877,15 +899,15 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
         if existing_row:
             if not existing_row["expected_qty"]:
                 existing_row["expected_qty"] = expected_qty
+            if not existing_row["qty_needed"]:
+                existing_row["qty_needed"] = component.get("qty_needed", 0)
             continue
-        assigned_stations = {station.station_name for station in get_part_station_routes(db, component_id)}
-        station_flags = {station_name: (station_name in assigned_stations) for station_name in station_names}
         new_row = {
             "expected_qty": expected_qty,
-            "external_qty_needed": component.get("external_quantity_needed", 0),
+            "qty_needed": component.get("qty_needed", component.get("external_quantity_needed", 0)),
+            "current_qty": 0,
             "component_id": component_id,
             "scrap_qty": 0,
-            "station_flags": station_flags,
         }
         component_rows.append(new_row)
         component_rows_by_id[component_id] = new_row
@@ -895,6 +917,18 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
     else:
         component_rows = part_rows
 
+    mpf = db.query(models.MpfMaster).filter_by(id=pallet.mpf_master_id).first() if pallet.mpf_master_id else None
+    raw_material = None
+    if mpf:
+        parsed_sheet = parse_sheet_size(mpf.sheet_size)
+        if parsed_sheet:
+            width, length = parsed_sheet
+            raw_material = db.query(models.RawMaterial).filter(
+                models.RawMaterial.gauge == mpf.material,
+                ((models.RawMaterial.width == width) & (models.RawMaterial.length == length)) |
+                ((models.RawMaterial.width == length) & (models.RawMaterial.length == width)),
+            ).first()
+
     return templates.TemplateResponse("pallet_edit.html", {
         "request": request,
         "user": user,
@@ -902,7 +936,7 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
         "entity_groups": ENTITY_GROUPS,
         "pallet": pallet,
         "part_rows": component_rows,
-        "station_names": station_names,
+        "raw_material_id": raw_material.id if raw_material else "-",
     })
 
 
@@ -915,8 +949,9 @@ async def pallet_edit_save(pallet_id: int, request: Request, db: Session = Depen
     form = await request.form()
     component_ids = form.getlist("component_id")
     expected_qtys = form.getlist("expected_qty")
-    external_qtys = form.getlist("external_qty_needed")
+    qty_neededs = form.getlist("qty_needed")
     scrap_qtys = form.getlist("scrap_qty")
+    current_qtys = form.getlist("current_qty")
 
     component_snapshot: list[dict] = []
     db.query(models.PalletPart).filter_by(pallet_id=pallet.id).delete(synchronize_session=False)
@@ -937,22 +972,23 @@ async def pallet_edit_save(pallet_id: int, request: Request, db: Session = Depen
         if not component_id or component_id == (pallet.frame_part_number or ""):
             continue
         expected_qty = float(expected_qtys[index] or 0) if index < len(expected_qtys) else 0
-        external_qty_needed = float(external_qtys[index] or 0) if index < len(external_qtys) else 0
+        qty_needed = float(qty_neededs[index] or 0) if index < len(qty_neededs) else 0
         scrap_qty = float(scrap_qtys[index] or 0) if index < len(scrap_qtys) else 0
+        current_qty = float(current_qtys[index] or 0) if index < len(current_qtys) else 0
         ensure_inventory_component_exists(db, component_id)
         component_revision = ensure_current_part_revision(db, component_id, user.username)
         db.add(models.PalletPart(
             pallet_id=pallet.id,
             part_revision_id=component_revision.id,
             planned_quantity=expected_qty,
-            external_quantity_needed=external_qty_needed,
-            actual_quantity=0,
+            external_quantity_needed=qty_needed,
+            actual_quantity=current_qty,
             scrap_quantity=scrap_qty,
         ))
         component_snapshot.append({
             "component_id": component_id,
             "expected_quantity": expected_qty,
-            "external_quantity_needed": external_qty_needed,
+            "qty_needed": qty_needed,
         })
 
     pallet.component_list_json = json.dumps(component_snapshot)
@@ -1053,9 +1089,7 @@ def production_create_order(
     db.commit()
     db.refresh(pallet)
 
-    details = db.query(models.MpfDetail).filter_by(mpf_master_id=mpf.id).order_by(models.MpfDetail.id.asc()).all()
-    bom_components = get_part_component_requirements(db, frame_part_id)
-    component_snapshot = []
+    component_snapshot = build_component_quantities(db, frame_part_id, expected_quantity, sheet_count, mpf.id)
     all_part_revisions = [
         {
             "part_revision_id": revision.id,
@@ -1064,42 +1098,15 @@ def production_create_order(
         }
     ]
 
-    mpf_component_ids: set[str] = set()
-    for detail in details:
-        component_id = (detail.component_id or "").strip()
-        expected_component_qty = detail.sheet_qty * sheet_count
-        if not component_id:
-            continue
-        mpf_component_ids.add(component_id)
-        component_snapshot.append({
-            "component_id": component_id,
-            "qty_per_sheet": detail.sheet_qty,
-            "expected_quantity": expected_component_qty,
-            "external_quantity_needed": 0,
-        })
+    for component in component_snapshot:
+        component_id = component["component_id"]
+        qty_needed = float(component.get("qty_needed") or 0)
+        expected_component_qty = float(component.get("expected_quantity") or 0)
         component_revision = ensure_current_part_revision(db, component_id, user.username)
         all_part_revisions.append({
             "part_revision_id": component_revision.id,
             "planned_quantity": expected_component_qty,
-            "external_quantity_needed": 0,
-        })
-
-    for component in bom_components:
-        component_id = component["component_id"]
-        if component_id in mpf_component_ids:
-            continue
-        external_qty_needed = expected_quantity * float(component.get("component_qty") or 0)
-        component_snapshot.append({
-            "component_id": component_id,
-            "qty_per_sheet": 0,
-            "expected_quantity": 0,
-            "external_quantity_needed": external_qty_needed,
-        })
-        component_revision = ensure_current_part_revision(db, component_id, user.username)
-        all_part_revisions.append({
-            "part_revision_id": component_revision.id,
-            "planned_quantity": 0,
-            "external_quantity_needed": external_qty_needed,
+            "external_quantity_needed": qty_needed,
         })
 
     pallet.component_list_json = json.dumps(component_snapshot)

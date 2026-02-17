@@ -5,38 +5,47 @@
   <a class="action-btn secondary" href="/production/pallet/{{pallet.id}}">Back to Pallet</a>
 </div>
 
+<table>
+  <tr>
+    <th>Frame Part ID</th>
+    <th>Qty of Frames</th>
+    <th>Qty of Sheets of Raw Material</th>
+    <th>Raw Material ID</th>
+  </tr>
+  <tr>
+    <td>{{pallet.frame_part_number or '-'}}</td>
+    <td>{{pallet.expected_quantity or 0}}</td>
+    <td>{{pallet.sheet_count or 0}}</td>
+    <td>{{raw_material_id}}</td>
+  </tr>
+</table>
+
 <form method="post" action="/production/pallet/{{pallet.id}}/edit" class="panel-form">
   <table>
     <tr>
-      <th>Component ID</th>
+      <th>Qty Needed</th>
       <th>Expected Qty</th>
-      <th>External Qty Needed</th>
       <th>Qty Scrap</th>
-      {% for station_name in station_names %}
-      <th>{{station_name}}</th>
-      {% endfor %}
+      <th>Current Qty</th>
+      <th>Component ID</th>
     </tr>
     {% for row in part_rows %}
     <tr>
+      <td><input type="number" step="0.01" min="0" name="qty_needed" value="{{row.qty_needed or 0}}" /></td>
+      <td><input type="number" step="0.01" min="0" name="expected_qty" value="{{row.expected_qty}}" /></td>
+      <td><input type="number" step="0.01" min="0" name="scrap_qty" value="{{row.scrap_qty}}" /></td>
+      <td><input type="number" step="0.01" min="0" name="current_qty" value="{{row.current_qty or 0}}" /></td>
       <td>
         <input type="text" name="component_id" value="{{row.component_id or ''}}" />
       </td>
-      <td><input type="number" step="0.01" min="0" name="expected_qty" value="{{row.expected_qty}}" /></td>
-      <td><input type="number" step="0.01" min="0" name="external_qty_needed" value="{{row.external_qty_needed or 0}}" /></td>
-      <td><input type="number" step="0.01" min="0" name="scrap_qty" value="{{row.scrap_qty}}" /></td>
-      {% for station_name in station_names %}
-      <td>{% if row.station_flags[station_name] %}✓{% else %}-{% endif %}</td>
-      {% endfor %}
     </tr>
     {% endfor %}
     <tr>
-      <td><input type="text" name="component_id" value="" placeholder="add component" /></td>
+      <td><input type="number" step="0.01" min="0" name="qty_needed" value="0" /></td>
       <td><input type="number" step="0.01" min="0" name="expected_qty" value="0" /></td>
-      <td><input type="number" step="0.01" min="0" name="external_qty_needed" value="0" /></td>
       <td><input type="number" step="0.01" min="0" name="scrap_qty" value="0" /></td>
-      {% for station_name in station_names %}
-      <td>-</td>
-      {% endfor %}
+      <td><input type="number" step="0.01" min="0" name="current_qty" value="0" /></td>
+      <td><input type="text" name="component_id" value="" placeholder="add component" /></td>
     </tr>
   </table>
   <div class="action-row">
