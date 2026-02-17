@@ -2934,7 +2934,7 @@ def ensure_storage_bins(db: Session, location: models.StorageLocation):
                     storage_location_id=location.id,
                     shelf_id=shelf_id,
                     bin_id=bin_id,
-                    pallet_id=holder_id,
+                    location_id=holder_id,
                     description="location holder",
                 ))
     db.commit()
