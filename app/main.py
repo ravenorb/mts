@@ -464,6 +464,79 @@ def get_part_station_routes(db: Session, part_number: str) -> list[models.Statio
     return stations
 
 
+def ensure_order_backlog_has_pallets(db: Session, stations: list[models.Station]):
+    if not stations:
+        return
+
+    existing_order_ids = {
+        row[0]
+        for row in db.query(models.Pallet.production_order_id)
+        .filter(models.Pallet.production_order_id.isnot(None))
+        .all()
+    }
+    if not existing_order_ids:
+        existing_order_ids = set()
+
+    missing_orders = (
+        db.query(models.ProductionOrder)
+        .filter(models.ProductionOrder.id.notin_(existing_order_ids) if existing_order_ids else text("1=1"))
+        .order_by(models.ProductionOrder.created_at.asc(), models.ProductionOrder.id.asc())
+        .all()
+    )
+    if not missing_orders:
+        return
+
+    first_station = stations[0]
+    for order in missing_orders:
+        part_revision = db.query(models.PartRevision).filter_by(id=order.part_revision_id).first()
+        part_number = ""
+        if part_revision:
+            part = db.query(models.Part).filter_by(id=part_revision.part_id).first()
+            part_number = part.part_number if part else ""
+
+        pallet = models.Pallet(
+            pallet_code=f"P-AUTO-{order.id}",
+            pallet_type="manual",
+            production_order_id=order.id,
+            frame_part_number=part_number,
+            expected_quantity=order.quantity_ordered or 0,
+            sheet_count=0,
+            status="staged",
+            current_station_id=first_station.id,
+            created_by="system",
+        )
+        db.add(pallet)
+        db.flush()
+
+        if part_revision:
+            db.add(models.PalletPart(
+                pallet_id=pallet.id,
+                part_revision_id=part_revision.id,
+                planned_quantity=order.quantity_ordered or 0,
+                actual_quantity=0,
+                scrap_quantity=0,
+            ))
+
+        db.add(models.PalletEvent(
+            pallet_id=pallet.id,
+            station_id=first_station.id,
+            event_type="created",
+            quantity=order.quantity_ordered or 0,
+            recorded_by="system",
+            notes=f"Auto-created from production order {order.id}",
+        ))
+
+        max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=first_station.id).scalar() or 0
+        db.add(models.Queue(
+            station_id=first_station.id,
+            pallet_id=pallet.id,
+            queue_position=int(max_position) + 1,
+            status="queued",
+        ))
+
+    db.commit()
+
+
 def ensure_current_part_revision(db: Session, part_number: str, username: str) -> models.PartRevision:
     part = db.query(models.Part).filter_by(part_number=part_number).first()
     if not part:
@@ -609,6 +682,7 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
         pallet = pallet_query.first()
 
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    ensure_order_backlog_has_pallets(db, stations)
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
     active_pallets = db.query(models.Pallet).order_by(models.Pallet.created_at.desc()).all()
 
