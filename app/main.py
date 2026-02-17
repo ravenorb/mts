@@ -1073,134 +1073,140 @@ def production_create_order(
     db: Session = Depends(get_db),
     user=Depends(require_login),
 ):
-    mpf = db.query(models.MpfMaster).filter_by(id=mpf_master_id).first()
-    if not mpf or mpf.part_id != frame_part_id:
-        raise HTTPException(422, "Invalid HK MPF selection")
-    if mpf.qty_produced <= 0:
-        raise HTTPException(422, "Selected HK MPF has no qty produced value")
-    if expected_quantity <= 0:
-        raise HTTPException(422, "Expected quantity must be greater than zero")
+    try:
+        mpf = db.query(models.MpfMaster).filter_by(id=mpf_master_id).first()
+        if not mpf or mpf.part_id != frame_part_id:
+            raise HTTPException(422, "Invalid HK MPF selection")
+        if mpf.qty_produced <= 0:
+            raise HTTPException(422, "Selected HK MPF has no qty produced value")
+        if expected_quantity <= 0:
+            raise HTTPException(422, "Expected quantity must be greater than zero")
 
-    sheet_count = expected_quantity / mpf.qty_produced
-    if abs(round(sheet_count) - sheet_count) > 1e-6:
-        raise HTTPException(422, "Expected quantity must be a multiple of qty produced")
-    sheet_count = float(round(sheet_count))
+        sheet_count = expected_quantity / mpf.qty_produced
+        if abs(round(sheet_count) - sheet_count) > 1e-6:
+            raise HTTPException(422, "Expected quantity must be a multiple of qty produced")
+        sheet_count = float(round(sheet_count))
 
-    if not db.query(models.Part).filter_by(part_number=frame_part_id).first() and not db.query(models.PartMaster).filter_by(part_id=frame_part_id).first():
-        raise HTTPException(422, f"Part {frame_part_id} is not defined in parts or engineering part tables")
-    revision = ensure_current_part_revision(db, frame_part_id, user.username)
+        if not db.query(models.Part).filter_by(part_number=frame_part_id).first() and not db.query(models.PartMaster).filter_by(part_id=frame_part_id).first():
+            raise HTTPException(422, f"Part {frame_part_id} is not defined in parts or engineering part tables")
+        revision = ensure_current_part_revision(db, frame_part_id, user.username)
 
-    parsed_sheet = parse_sheet_size(mpf.sheet_size)
-    material_row = None
-    if parsed_sheet:
-        width, length = parsed_sheet
-        material_row = db.query(models.RawMaterial).filter(
-            models.RawMaterial.gauge == mpf.material,
-            ((models.RawMaterial.width == width) & (models.RawMaterial.length == length)) |
-            ((models.RawMaterial.width == length) & (models.RawMaterial.length == width)),
-        ).first()
+        parsed_sheet = parse_sheet_size(mpf.sheet_size)
+        material_row = None
+        if parsed_sheet:
+            width, length = parsed_sheet
+            material_row = db.query(models.RawMaterial).filter(
+                models.RawMaterial.gauge == mpf.material,
+                ((models.RawMaterial.width == width) & (models.RawMaterial.length == length)) |
+                ((models.RawMaterial.width == length) & (models.RawMaterial.length == width)),
+            ).first()
 
-    if material_row:
-        if material_row.qty_on_hand < sheet_count:
-            raise HTTPException(422, "Not enough raw material sheets on hand")
-        material_row.qty_on_hand -= sheet_count
+        if material_row:
+            if material_row.qty_on_hand < sheet_count:
+                raise HTTPException(422, "Not enough raw material sheets on hand")
+            material_row.qty_on_hand -= sheet_count
 
-    order = models.ProductionOrder(part_revision_id=revision.id, quantity_ordered=expected_quantity, status="planned")
-    db.add(order)
-    db.commit()
-    db.refresh(order)
+        order = models.ProductionOrder(part_revision_id=revision.id, quantity_ordered=expected_quantity, status="planned")
+        db.add(order)
+        db.flush()
 
-    pallet_code = f"P-{int(datetime.utcnow().timestamp())}-{order.id}"
-    route_stations = get_part_station_routes(db, frame_part_id)
-    first_station = route_stations[0] if route_stations else db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).first()
-    pallet = models.Pallet(
-        pallet_code=pallet_code,
-        pallet_type="manual",
-        production_order_id=order.id,
-        mpf_master_id=mpf.id,
-        frame_part_number=frame_part_id,
-        expected_quantity=expected_quantity,
-        sheet_count=sheet_count,
-        status="staged",
-        current_station_id=first_station.id if first_station else None,
-        created_by=user.username,
-    )
-    db.add(pallet)
-    db.commit()
-    db.refresh(pallet)
+        route_stations = get_part_station_routes(db, frame_part_id)
+        first_station = route_stations[0] if route_stations else db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).first()
+        pallet = models.Pallet(
+            pallet_code="",
+            pallet_type="manual",
+            production_order_id=order.id,
+            mpf_master_id=mpf.id,
+            frame_part_number=frame_part_id,
+            expected_quantity=expected_quantity,
+            sheet_count=sheet_count,
+            status="staged",
+            current_station_id=first_station.id if first_station else None,
+            created_by=user.username,
+        )
+        db.add(pallet)
+        db.flush()
+        pallet.pallet_code = f"P-{int(datetime.utcnow().timestamp())}-{order.id}"
 
-    component_snapshot = build_component_quantities(db, frame_part_id, expected_quantity, sheet_count, mpf.id)
-    all_part_revisions = [
-        {
-            "part_revision_id": revision.id,
-            "planned_quantity": expected_quantity,
-            "external_quantity_needed": 0,
-        }
-    ]
+        component_snapshot = build_component_quantities(db, frame_part_id, expected_quantity, sheet_count, mpf.id)
+        all_part_revisions = [
+            {
+                "part_revision_id": revision.id,
+                "planned_quantity": expected_quantity,
+                "external_quantity_needed": 0,
+            }
+        ]
 
-    for component in component_snapshot:
-        component_id = component["component_id"]
-        qty_needed = float(component.get("qty_needed") or 0)
-        expected_component_qty = float(component.get("expected_quantity") or 0)
-        component_revision = ensure_current_part_revision(db, component_id, user.username)
-        all_part_revisions.append({
-            "part_revision_id": component_revision.id,
-            "planned_quantity": expected_component_qty,
-            "external_quantity_needed": qty_needed,
-        })
+        for component in component_snapshot:
+            component_id = component["component_id"]
+            qty_needed = float(component.get("qty_needed") or 0)
+            expected_component_qty = float(component.get("expected_quantity") or 0)
+            component_revision = ensure_current_part_revision(db, component_id, user.username)
+            all_part_revisions.append({
+                "part_revision_id": component_revision.id,
+                "planned_quantity": expected_component_qty,
+                "external_quantity_needed": qty_needed,
+            })
 
-    pallet.component_list_json = json.dumps(component_snapshot)
+        pallet.component_list_json = json.dumps(component_snapshot)
 
-    for part_item in all_part_revisions:
-        db.add(models.PalletPart(
+        for part_item in all_part_revisions:
+            db.add(models.PalletPart(
+                pallet_id=pallet.id,
+                part_revision_id=part_item["part_revision_id"],
+                planned_quantity=part_item["planned_quantity"],
+                external_quantity_needed=part_item.get("external_quantity_needed", 0),
+                actual_quantity=0,
+                scrap_quantity=0,
+            ))
+        db.add(models.PalletRevision(
             pallet_id=pallet.id,
-            part_revision_id=part_item["part_revision_id"],
-            planned_quantity=part_item["planned_quantity"],
-            external_quantity_needed=part_item.get("external_quantity_needed", 0),
-            actual_quantity=0,
-            scrap_quantity=0,
+            revision_code="R1",
+            snapshot_json=json.dumps({
+                "frame_part_number": frame_part_id,
+                "expected_quantity": expected_quantity,
+                "sheet_count": sheet_count,
+                "components": component_snapshot,
+            }),
+            created_by=user.username,
         ))
-    db.add(models.PalletRevision(
-        pallet_id=pallet.id,
-        revision_code="R1",
-        snapshot_json=json.dumps({
-            "frame_part_number": frame_part_id,
-            "expected_quantity": expected_quantity,
-            "sheet_count": sheet_count,
-            "components": component_snapshot,
-        }),
-        created_by=user.username,
-    ))
-    db.add(models.PalletEvent(
-        pallet_id=pallet.id,
-        station_id=first_station.id if first_station else None,
-        event_type="created",
-        quantity=expected_quantity,
-        recorded_by=user.username,
-        notes=f"Order created from HK MPF {mpf.mpf_filename}",
-    ))
-
-    route_station_ids: list[int] = []
-    seen_station_ids: set[int] = set()
-    for route_station in route_stations:
-        if route_station.id in seen_station_ids:
-            continue
-        route_station_ids.append(route_station.id)
-        seen_station_ids.add(route_station.id)
-
-    if not route_station_ids:
-        route_station_ids = [station.id for station in db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).all()]
-
-    for station_id in route_station_ids:
-        max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station_id).scalar() or 0
-        db.add(models.Queue(
-            station_id=station_id,
+        db.add(models.PalletEvent(
             pallet_id=pallet.id,
-            queue_position=int(max_position) + 1,
-            status="queued",
+            station_id=first_station.id if first_station else None,
+            event_type="created",
+            quantity=expected_quantity,
+            recorded_by=user.username,
+            notes=f"Order created from HK MPF {mpf.mpf_filename}",
         ))
 
-    db.commit()
+        route_station_ids: list[int] = []
+        seen_station_ids: set[int] = set()
+        for route_station in route_stations:
+            if route_station.id in seen_station_ids:
+                continue
+            route_station_ids.append(route_station.id)
+            seen_station_ids.add(route_station.id)
+
+        if not route_station_ids:
+            route_station_ids = [station.id for station in db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).all()]
+
+        for station_id in route_station_ids:
+            max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station_id).scalar() or 0
+            db.add(models.Queue(
+                station_id=station_id,
+                pallet_id=pallet.id,
+                queue_position=int(max_position) + 1,
+                status="queued",
+            ))
+
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(500, f"Failed to create order and pallet: {exc}")
+
     create_traveler_file(db, pallet.id)
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
