@@ -117,6 +117,7 @@ MODEL_MAP = {
     "pallet_revisions": models.PalletRevision,
     "pallet_parts": models.PalletPart,
     "pallet_events": models.PalletEvent,
+    "pallet_component_station_logs": models.PalletComponentStationLog,
     "maintenance_requests": models.MaintenanceRequest,
     "station_maintenance_tasks": models.StationMaintenanceTask,
     "maintenance_logs": models.MaintenanceLog,
@@ -153,7 +154,7 @@ FIELD_CHOICES = {
     ("stations", "active"): ["true", "false"],
     ("storage_locations", "pallet_storage"): ["true", "false"],
     ("scrap_steel", "delivered"): ["true", "false"],
-    ("pallets", "status"): ["staged", "in_progress", "hold", "complete", "combined"],
+    ("pallets", "status"): ["staged", "queued", "in_progress", "hold", "complete", "combined"],
     ("pallets", "pallet_type"): ["manual", "split", "mixed"],
     ("queues", "status"): ["queued", "in_progress", "blocked", "done"],
     ("maintenance_requests", "priority"): ["low", "normal", "high", "urgent"],
@@ -458,6 +459,27 @@ def ensure_pallet_station_route_schema(db: Session):
     db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_pallet_station_sequence ON pallet_station_routes(pallet_id, sequence_no)"))
     db.commit()
 
+
+
+
+def ensure_pallet_component_station_log_schema(db: Session):
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS pallet_component_station_logs (
+            id INTEGER PRIMARY KEY,
+            pallet_id INTEGER NOT NULL,
+            station_id INTEGER NOT NULL,
+            component_id VARCHAR(80) DEFAULT '',
+            qty_expected FLOAT DEFAULT 0,
+            qty_completed FLOAT DEFAULT 0,
+            qty_scrap FLOAT DEFAULT 0,
+            recorded_by VARCHAR(80) DEFAULT 'system',
+            recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(pallet_id) REFERENCES pallets(id),
+            FOREIGN KEY(station_id) REFERENCES stations(id)
+        )
+    """))
+    db.execute(text("CREATE INDEX IF NOT EXISTS idx_component_station_log_pallet_station ON pallet_component_station_logs(pallet_id, station_id)"))
+    db.commit()
 
 def ensure_storage_bin_schema(db: Session):
     storage_bin_columns = {row[1] for row in db.execute(text("PRAGMA table_info(storage_bins)"))}
@@ -834,6 +856,7 @@ def startup():
     ensure_pallet_schema(db)
     ensure_pallet_parts_schema(db)
     ensure_pallet_station_route_schema(db)
+    ensure_pallet_component_station_log_schema(db)
     ensure_storage_bin_schema(db)
     ensure_employee_auth_schema(db)
     migrate_users_to_employees(db)
@@ -864,6 +887,35 @@ def parse_sheet_size(sheet_size: str) -> tuple[float, float] | None:
     if len(numbers) < 2:
         return None
     return float(numbers[0]), float(numbers[1])
+
+
+def get_next_route_row(db: Session, pallet_id: int, station_id: int) -> models.PalletStationRoute | None:
+    route_rows = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet_id).order_by(models.PalletStationRoute.sequence_no.asc()).all()
+    for idx, row in enumerate(route_rows):
+        if row.station_id == station_id:
+            return route_rows[idx + 1] if idx + 1 < len(route_rows) else None
+    return None
+
+
+def queue_pallet_for_station(db: Session, pallet: models.Pallet, station_id: int):
+    existing = db.query(models.Queue).filter_by(station_id=station_id, pallet_id=pallet.id).first()
+    if existing:
+        existing.status = "queued"
+        return
+    max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station_id).scalar() or 0
+    db.add(models.Queue(station_id=station_id, pallet_id=pallet.id, queue_position=int(max_position) + 1, status="queued"))
+
+
+def build_station_component_rollup(db: Session, pallet_id: int) -> dict[str, list[dict]]:
+    logs = db.query(models.PalletComponentStationLog).filter_by(pallet_id=pallet_id).order_by(models.PalletComponentStationLog.id.asc()).all()
+    rollup: dict[str, list[dict]] = {}
+    for log in logs:
+        rollup.setdefault(log.component_id, []).append({
+            "station_id": log.station_id,
+            "qty_completed": log.qty_completed,
+            "qty_scrap": log.qty_scrap,
+        })
+    return rollup
 
 
 def parse_pallet_component_list(component_list_json: str | None) -> list[dict]:
@@ -996,7 +1048,7 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
         }
         for queue_row in queue_rows:
             pallet_for_row = pallets_by_id.get(queue_row.pallet_id)
-            if not pallet_for_row or pallet_for_row.current_station_id != selected_station.id:
+            if not pallet_for_row:
                 continue
             station_queue.append({
                 "queue": queue_row,
@@ -1072,10 +1124,11 @@ def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db
     ensure_pallet_station_routing(db, pallet, fallback_station_id=pallet.current_station_id)
     db.commit()
     route_rows = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet_id).order_by(models.PalletStationRoute.sequence_no.asc()).all()
+    component_station_rollup = build_station_component_rollup(db, pallet.id)
     events = db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).order_by(models.PalletEvent.recorded_at.asc()).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     available_bins = get_available_pallet_bins(db, include_bin_id=pallet.storage_bin_id)
-    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "part_rows": part_rows, "route_rows": route_rows, "events": events, "stations": stations, "available_bins": available_bins, "station_label": station_label, "location_label": pallet_location_label(db, pallet), "errors": {}})
+    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "part_rows": part_rows, "route_rows": route_rows, "component_station_rollup": component_station_rollup, "events": events, "stations": stations, "available_bins": available_bins, "station_label": station_label, "location_label": pallet_location_label(db, pallet), "errors": {}})
 
 
 @app.get("/production/pallet/{pallet_id}/edit", response_class=HTMLResponse)
@@ -1216,25 +1269,32 @@ def pallet_release_to_hk_queue(pallet_id: int, db: Session = Depends(get_db), us
     if not pallet:
         raise HTTPException(404)
 
-    already_released = db.query(models.PalletEvent).filter_by(pallet_id=pallet.id, event_type="released_to_hk_queue").first()
+    ensure_pallet_station_routing(db, pallet)
+    first_route = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id).order_by(models.PalletStationRoute.sequence_no.asc()).first()
+    if not first_route or not first_route.station_id:
+        raise HTTPException(422, "Pallet has no station route configured")
+
+    already_released = db.query(models.PalletEvent).filter_by(pallet_id=pallet.id, event_type="released_to_queue").first()
     if already_released:
-        raise HTTPException(422, "Pallet already released to HK Queue")
+        raise HTTPException(422, "Pallet already released")
 
-    hk_bin = next(iter(get_available_pallet_bins(db, include_bin_id=pallet.storage_bin_id, hk_only=True)), None)
-    if not hk_bin:
-        raise HTTPException(422, "No open pallet bin found in HK Queue")
+    clear_pallet_storage_bin(db, pallet)
+    pallet.storage_bin_id = None
+    pallet.current_station_id = None
+    pallet.status = "queued"
 
-    assign_pallet_to_storage_bin(db, pallet, hk_bin)
+    first_route.status = "queued"
+    first_route.location_id = f"Q{first_route.station_id}"
+    queue_pallet_for_station(db, pallet, first_route.station_id)
+
     update_inventory_for_released_pallet(db, pallet)
-    pallet.status = "in_progress"
-    location = db.query(models.StorageLocation).filter_by(id=hk_bin.storage_location_id).first()
     db.add(models.PalletEvent(
         pallet_id=pallet.id,
-        station_id=None,
-        event_type="released_to_hk_queue",
+        station_id=first_route.station_id,
+        event_type="released_to_queue",
         quantity=pallet.expected_quantity or 0,
         recorded_by=user.username,
-        notes=f"Released pallet to {location.location_description} S{hk_bin.shelf_id} B{hk_bin.bin_id}",
+        notes=f"Released pallet to Station {first_route.station_id} queue",
     ))
     db.commit()
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
@@ -1402,15 +1462,6 @@ def production_create_order(
 
         if not route_station_ids:
             route_station_ids = [station.id for station in db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).all()]
-
-        for station_id in route_station_ids:
-            max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station_id).scalar() or 0
-            db.add(models.Queue(
-                station_id=station_id,
-                pallet_id=pallet.id,
-                queue_position=int(max_position) + 1,
-                status="queued",
-            ))
 
         ensure_pallet_station_routing(db, pallet, fallback_station_id=first_station.id if first_station else None)
 
@@ -2377,7 +2428,7 @@ def station_page(station_id: int, request: Request, db: Session = Depends(get_db
     queue = []
     for q in queue_rows:
         pallet = db.query(models.Pallet).filter_by(id=q.pallet_id).first()
-        if not pallet or pallet.current_station_id != station_id:
+        if not pallet:
             continue
         queue.append({
             "id": q.id,
@@ -2431,8 +2482,173 @@ def station_start_next(station_id: int, db: Session = Depends(get_db), user=Depe
         if pallet:
             pallet.status = "in_progress"
             pallet.current_station_id = station_id
+            route_row = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id, station_id=station_id).first()
+            if route_row:
+                route_row.status = "in_progress"
+                route_row.location_id = f"S{station_id}"
             db.add(models.PalletEvent(pallet_id=pallet.id, station_id=station_id, event_type="started", quantity=0, recorded_by=user.username, notes="Started next queued pallet"))
         db.commit()
+    return RedirectResponse(f"/stations/{station_id}", status_code=302)
+
+
+@app.get("/stations/{station_id}/complete", response_class=HTMLResponse)
+def station_complete_pallet_form(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+
+    pallet = db.query(models.Pallet).filter_by(current_station_id=station_id, status="in_progress").order_by(models.Pallet.id.desc()).first()
+    if not pallet:
+        return RedirectResponse(f"/stations/{station_id}", status_code=302)
+
+    part_rows = get_pallet_part_rows(db, pallet)
+    available_bins = get_available_pallet_bins(db)
+    return templates.TemplateResponse("station_complete_pallet.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "station": station,
+        "pallet": pallet,
+        "part_rows": part_rows,
+        "available_bins": available_bins,
+        **station_nav_context(db),
+    })
+
+
+@app.post("/stations/{station_id}/complete")
+async def station_complete_pallet_submit(station_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+    if not station:
+        raise HTTPException(404)
+
+    pallet = db.query(models.Pallet).filter_by(current_station_id=station_id, status="in_progress").order_by(models.Pallet.id.desc()).first()
+    if not pallet:
+        return RedirectResponse(f"/stations/{station_id}", status_code=302)
+
+    form = await request.form()
+    component_ids = form.getlist("component_id")
+    qty_expected_list = form.getlist("qty_expected")
+    qty_completed_list = form.getlist("qty_completed")
+    qty_scrap_list = form.getlist("qty_scrap")
+
+    total_completed = 0.0
+    for idx, component_id_raw in enumerate(component_ids):
+        component_id = (component_id_raw or "").strip()
+        if not component_id:
+            continue
+        qty_expected = float(qty_expected_list[idx] or 0) if idx < len(qty_expected_list) else 0
+        qty_completed = float(qty_completed_list[idx] or 0) if idx < len(qty_completed_list) else 0
+        qty_scrap = float(qty_scrap_list[idx] or 0) if idx < len(qty_scrap_list) else 0
+
+        db.add(models.PalletComponentStationLog(
+            pallet_id=pallet.id,
+            station_id=station_id,
+            component_id=component_id,
+            qty_expected=qty_expected,
+            qty_completed=qty_completed,
+            qty_scrap=qty_scrap,
+            recorded_by=user.username,
+        ))
+
+        if component_id == (pallet.frame_part_number or ""):
+            total_completed = qty_completed
+
+        revision = db.query(models.PartRevision).join(models.Part, models.Part.id == models.PartRevision.part_id).filter(
+            models.Part.part_number == component_id
+        ).order_by(models.PartRevision.is_current.desc(), models.PartRevision.id.desc()).first()
+        if revision:
+            pallet_part = db.query(models.PalletPart).filter_by(pallet_id=pallet.id, part_revision_id=revision.id).first()
+            if pallet_part:
+                pallet_part.actual_quantity = qty_completed
+                pallet_part.scrap_quantity = qty_scrap
+
+    route_row = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id, station_id=station_id).first()
+    if route_row:
+        route_row.qty_completed = total_completed
+        route_row.qty_scrap = sum(float(v or 0) for v in qty_scrap_list)
+        route_row.status = "complete"
+        route_row.location_id = f"S{station_id}"
+
+    active_queue = db.query(models.Queue).filter_by(station_id=station_id, pallet_id=pallet.id, status="in_progress").first()
+    if active_queue:
+        active_queue.status = "done"
+
+    if route_row and route_row.sequence_no == 1:
+        for idx, component_id_raw in enumerate(component_ids):
+            component_id = (component_id_raw or "").strip()
+            qty_completed = float(qty_completed_list[idx] or 0) if idx < len(qty_completed_list) else 0
+            if not component_id:
+                continue
+            revision = db.query(models.PartRevision).join(models.Part, models.Part.id == models.PartRevision.part_id).filter(
+                models.Part.part_number == component_id
+            ).order_by(models.PartRevision.is_current.desc(), models.PartRevision.id.desc()).first()
+            if revision:
+                pallet_part = db.query(models.PalletPart).filter_by(pallet_id=pallet.id, part_revision_id=revision.id).first()
+                if pallet_part:
+                    pallet_part.actual_quantity = qty_completed
+
+    expected_total = float(pallet.expected_quantity or 0)
+    spawn_leftover = (form.get("spawn_leftover") or "") == "yes"
+    if spawn_leftover and expected_total > total_completed:
+        leftover = expected_total - total_completed
+        new_pallet = models.Pallet(
+            pallet_code=f"{pallet.pallet_code}-SPLIT-{int(datetime.utcnow().timestamp())}",
+            pallet_type="split",
+            production_order_id=pallet.production_order_id,
+            mpf_master_id=pallet.mpf_master_id,
+            frame_part_number=pallet.frame_part_number,
+            expected_quantity=leftover,
+            sheet_count=pallet.sheet_count,
+            component_list_json=pallet.component_list_json,
+            status="staged",
+            created_by=user.username,
+            parent_pallet_id=pallet.id,
+        )
+        db.add(new_pallet)
+        db.flush()
+        original_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet.id).all()
+        for part in original_parts:
+            ratio = (leftover / expected_total) if expected_total > 0 else 0
+            db.add(models.PalletPart(
+                pallet_id=new_pallet.id,
+                part_revision_id=part.part_revision_id,
+                planned_quantity=(part.planned_quantity or 0) * ratio,
+                external_quantity_needed=(part.external_quantity_needed or 0) * ratio,
+                actual_quantity=0,
+                scrap_quantity=0,
+            ))
+        ensure_pallet_station_routing(db, new_pallet)
+
+    route_choice = (form.get("route_choice") or "queue_next").strip()
+    next_route_row = get_next_route_row(db, pallet.id, station_id)
+    if route_choice == "store":
+        storage_bin_id = form.get("storage_bin_id")
+        if storage_bin_id:
+            storage_bin = db.query(models.StorageBin).filter_by(id=int(storage_bin_id)).first()
+            if storage_bin:
+                assign_pallet_to_storage_bin(db, pallet, storage_bin)
+        pallet.status = "staged"
+    elif next_route_row and next_route_row.station_id:
+        queue_pallet_for_station(db, pallet, next_route_row.station_id)
+        next_route_row.status = "queued"
+        next_route_row.location_id = f"Q{next_route_row.station_id}"
+        pallet.status = "queued"
+        pallet.current_station_id = None
+        pallet.storage_bin_id = None
+    else:
+        pallet.status = "complete"
+        pallet.current_station_id = None
+
+    db.add(models.PalletEvent(
+        pallet_id=pallet.id,
+        station_id=station_id,
+        event_type="completed",
+        quantity=total_completed,
+        recorded_by=user.username,
+        notes="Completed pallet at station",
+    ))
+    db.commit()
     return RedirectResponse(f"/stations/{station_id}", status_code=302)
 
 
