@@ -278,6 +278,7 @@ class Pallet(Base):
     frame_part_number: Mapped[str] = mapped_column(String(80), default="")
     expected_quantity: Mapped[float] = mapped_column(Float, default=0)
     sheet_count: Mapped[float] = mapped_column(Float, default=0)
+    component_list_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(40), default="staged")
     current_station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

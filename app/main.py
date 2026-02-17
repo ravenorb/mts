@@ -426,6 +426,8 @@ def ensure_pallet_schema(db: Session):
         db.execute(text("ALTER TABLE pallets ADD COLUMN expected_quantity FLOAT DEFAULT 0"))
     if "sheet_count" not in pallet_columns:
         db.execute(text("ALTER TABLE pallets ADD COLUMN sheet_count FLOAT DEFAULT 0"))
+    if "component_list_json" not in pallet_columns:
+        db.execute(text("ALTER TABLE pallets ADD COLUMN component_list_json TEXT DEFAULT '[]'"))
     db.commit()
 
 
@@ -641,6 +643,26 @@ def parse_sheet_size(sheet_size: str) -> tuple[float, float] | None:
     return float(numbers[0]), float(numbers[1])
 
 
+def parse_pallet_component_list(component_list_json: str | None) -> list[dict]:
+    if not component_list_json:
+        return []
+    try:
+        payload = json.loads(component_list_json)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    parsed: list[dict] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        parsed.append({
+            "component_id": (item.get("component_id") or "").strip(),
+            "expected_quantity": item.get("expected_quantity", 0),
+        })
+    return parsed
+
+
 def build_station_queue_cards(db: Session, stations: list[models.Station]) -> list[dict]:
     cards: list[dict] = []
     for station in stations:
@@ -688,38 +710,24 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
 
     selected_station = None
     station_queue = []
-    all_queue_rows = db.query(models.Queue).order_by(models.Queue.station_id.asc(), models.Queue.queue_position.asc()).all()
     if tab.startswith("station-"):
         station_id = tab.split("station-", 1)[1]
         if station_id.isdigit():
             selected_station = next((station for station in stations if station.id == int(station_id)), None)
     if selected_station:
         queue_rows = db.query(models.Queue).filter_by(station_id=selected_station.id).order_by(models.Queue.queue_position.asc()).all()
-        queue_by_pallet_id = {row.pallet_id: row for row in queue_rows}
         pallets_by_id = {
             pallet.id: pallet
             for pallet in db.query(models.Pallet).filter(models.Pallet.id.in_([row.pallet_id for row in queue_rows])).all()
         }
         for queue_row in queue_rows:
-            station_queue.append({
-                "queue": queue_row,
-                "pallet": pallets_by_id.get(queue_row.pallet_id),
-            })
-
-        pallet_ids_in_queue = {row.pallet_id for row in queue_rows}
-        pallets_at_station = (
-            db.query(models.Pallet)
-            .filter(models.Pallet.current_station_id == selected_station.id)
-            .order_by(models.Pallet.created_at.desc())
-            .all()
-        )
-        for pallet_at_station in pallets_at_station:
-            if pallet_at_station.id in pallet_ids_in_queue:
+            pallet_for_row = pallets_by_id.get(queue_row.pallet_id)
+            if not pallet_for_row or pallet_for_row.current_station_id != selected_station.id:
                 continue
-            queue_row = queue_by_pallet_id.get(pallet_at_station.id)
             station_queue.append({
                 "queue": queue_row,
-                "pallet": pallet_at_station,
+                "pallet": pallet_for_row,
+                "pallet_components": parse_pallet_component_list(pallet_for_row.component_list_json),
             })
 
     frame_parts_from_mpf = {
@@ -760,7 +768,6 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
         "tab": tab,
         "selected_station": selected_station,
         "station_queue": station_queue,
-        "all_queue_rows": all_queue_rows,
     })
 
 
@@ -945,6 +952,8 @@ def production_create_order(
                 "part_revision_id": component_revision.id,
                 "planned_quantity": expected_component_qty,
             })
+
+    pallet.component_list_json = json.dumps(component_snapshot)
 
     for part_item in all_part_revisions:
         db.add(models.PalletPart(
@@ -1944,7 +1953,18 @@ def station_page(station_id: int, request: Request, db: Session = Depends(get_db
         return RedirectResponse(f"/stations/{station_id}/login", status_code=302)
 
     queue_rows = db.query(models.Queue).filter_by(station_id=station_id).order_by(models.Queue.queue_position.asc()).limit(5).all()
-    queue = [{"id": q.id, "position": q.queue_position, "status": q.status, "pallet": db.query(models.Pallet).filter_by(id=q.pallet_id).first()} for q in queue_rows]
+    queue = []
+    for q in queue_rows:
+        pallet = db.query(models.Pallet).filter_by(id=q.pallet_id).first()
+        if not pallet or pallet.current_station_id != station_id:
+            continue
+        queue.append({
+            "id": q.id,
+            "position": q.queue_position,
+            "status": q.status,
+            "pallet": pallet,
+            "components": parse_pallet_component_list(pallet.component_list_json),
+        })
     active_pallet = db.query(models.Pallet).filter_by(current_station_id=station_id, status="in_progress").order_by(models.Pallet.id.desc()).first()
     pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=active_pallet.id).all() if active_pallet else []
     station_files = db.query(models.PartRevisionFile).order_by(models.PartRevisionFile.uploaded_at.desc()).all()
