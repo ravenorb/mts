@@ -33,7 +33,7 @@ apt-get install -y --no-install-recommends \
 id -u "${APP_USER}" >/dev/null 2>&1 || useradd --system --create-home --shell /bin/bash "${APP_USER}"
 
 mkdir -p "${INSTALL_DIR}" "${DATA_ROOT}"/{sql,drawings,pdfs,part_revision_files,config}
-chown -R "${APP_USER}:${APP_USER}" "${DATA_ROOT}"
+chown -R "${APP_USER}:${APP_USER}" "${INSTALL_DIR}" "${DATA_ROOT}"
 
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   sudo -u "${APP_USER}" git -C "${INSTALL_DIR}" fetch --all --prune
@@ -41,6 +41,8 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
   sudo -u "${APP_USER}" git -C "${INSTALL_DIR}" pull --ff-only origin "${BRANCH}"
 else
   rm -rf "${INSTALL_DIR}"
+  mkdir -p "${INSTALL_DIR}"
+  chown "${APP_USER}:${APP_USER}" "${INSTALL_DIR}"
   sudo -u "${APP_USER}" git clone --branch "${BRANCH}" "${REPO_URL}" "${INSTALL_DIR}"
 fi
 
