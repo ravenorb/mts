@@ -60,6 +60,22 @@ def run_git_command(args: list[str]) -> subprocess.CompletedProcess[str] | None:
         return None
 
 
+def run_post_pull_command() -> tuple[bool, str]:
+    command = (os.getenv("MTS_PULL_APPLY_COMMAND") or "").strip()
+    if not command:
+        return False, "No apply command configured"
+    try:
+        subprocess.Popen(
+            ["bash", "-lc", f"sleep 1; {command}"],
+            cwd=REPO_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        return False, f"Failed to queue apply command: {exc}"
+    return True, "Apply command queued"
+
+
 def list_branches() -> tuple[list[str], str]:
     branch_result = run_git_command(["branch", "--all", "--format=%(refname:short)"])
     branch_lines = branch_result.stdout.splitlines() if branch_result else []
@@ -2231,7 +2247,14 @@ async def server_maintenance(request: Request, db: Session = Depends(get_db), us
             if not result:
                 message = "Unable to run git pull on this server."
             else:
-                message = "Latest changes pulled. Rebuild/restart container to apply runtime changes." if result.returncode == 0 else f"Pull failed: {result.stderr.strip()}"
+                if result.returncode != 0:
+                    message = f"Pull failed: {result.stderr.strip()}"
+                else:
+                    applied, apply_message = run_post_pull_command()
+                    if applied:
+                        message = "Latest changes pulled and reload command queued."
+                    else:
+                        message = f"Latest changes pulled. {apply_message}."
     elif action == "update_paths":
         DRAWING_DIR = Path(form.get("DRAWING_DATA_PATH", str(DRAWING_DIR)))
         PDF_DIR = Path(form.get("PDF_DATA_PATH", str(PDF_DIR)))

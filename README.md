@@ -50,3 +50,31 @@ Default login:
 ## Schema
 - SQL DDL: `schema.sql`
 - Runtime ORM schema: `app/models.py`
+
+## Debian 12 Host Install (no Docker)
+To install from a fresh Debian 12 server and run MTS as a systemd service:
+
+```bash
+curl -fsSL <RAW_REPO_FILE_URL>/scripts/install_debian12.sh -o /tmp/install_mts.sh
+sudo bash /tmp/install_mts.sh <repo_url> [branch]
+```
+
+If you are already inside a cloned repo on the server:
+
+```bash
+cd /opt/mts
+sudo bash scripts/install_debian12.sh <repo_url> [branch]
+```
+
+What this script configures:
+- system user: `mts`
+- app checkout: `/opt/mts`
+- persistent data: `/var/lib/mts` (SQL DB, drawings, PDFs, part files, runtime settings)
+- service: `mts.service` (auto-start on boot)
+- admin update/reload integration: `MTS_PULL_APPLY_COMMAND` set to restart `mts.service`
+
+After install:
+- App: `http://<server-ip>/`
+- Update/reload from UI: `Admin -> Server Maintenance -> Pull Latest and Reload`
+- Logs: `journalctl -u mts.service -f`
+

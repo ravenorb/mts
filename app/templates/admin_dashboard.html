@@ -50,8 +50,9 @@
     <div class="action-row">
       <button type="submit" name="action" value="refresh_branches">Refresh Branch List</button>
       <button type="submit" name="action" value="switch_branch">Switch Branch</button>
-      <button type="submit" name="action" value="pull_latest">Pull Latest and Apply</button>
+      <button type="submit" name="action" value="pull_latest">Pull Latest and Reload</button>
     </div>
+    <small>Reload command uses <code>MTS_PULL_APPLY_COMMAND</code> if configured on the server.</small>
     <h4>Data Paths</h4>
     <label>DRAWING_DATA_PATH</label>
     <input name="DRAWING_DATA_PATH" value="{{data_paths.DRAWING_DATA_PATH}}" />
