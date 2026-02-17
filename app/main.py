@@ -702,7 +702,7 @@ def build_component_quantities(db: Session, frame_part_id: str, expected_quantit
             continue
         component_map[component_id] = {
             "component_id": component_id,
-            "expected_quantity": float(detail.sheet_qty or 0) * float(sheet_count or 0),
+            "expected_quantity": float(detail.sheet_qty or 0) * float(expected_quantity or 0),
             "qty_needed": 0.0,
         }
 
@@ -1009,6 +1009,21 @@ def pallet_move(pallet_id: int, station_id: int = Form(...), notes: str = Form("
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
 
+@app.post("/production/pallet/{pallet_id}/delete")
+def production_pallet_delete(pallet_id: int, redirect_to: str = Form("/production?tab=active"), db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not pallet:
+        raise HTTPException(404)
+
+    db.query(models.Queue).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
+    db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
+    db.query(models.PalletPart).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
+    db.query(models.PalletRevision).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
+    db.delete(pallet)
+    db.commit()
+    return RedirectResponse(redirect_to if redirect_to.startswith("/") else "/production?tab=active", status_code=302)
+
+
 @app.post("/production/create-pallet")
 def production_create_pallet(part_revision_id: int = Form(...), quantity: float = Form(...), location_station_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
     if quantity <= 0:
@@ -1232,6 +1247,9 @@ def engineering_part_detail(part_id: str, request: Request, mode: str = "edit", 
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     assigned_routes = db.query(models.PartStationRoute).filter_by(part_id=part_id).order_by(models.PartStationRoute.route_order.asc(), models.PartStationRoute.id.asc()).all()
     assigned_station_ids = [route.station_id for route in assigned_routes]
+    station_map = {station.id: station for station in stations}
+    assigned_stations = [station_map[route.station_id] for route in assigned_routes if route.station_id in station_map]
+    available_stations = [station for station in stations if station.id not in assigned_station_ids]
 
     revision_file_buttons: list[dict[str, str]] = []
     if revision_header:
@@ -1279,8 +1297,8 @@ def engineering_part_detail(part_id: str, request: Request, mode: str = "edit", 
         "mode": mode,
         "revision_list": [item[0] for item in revision_list],
         "revision_file_buttons": revision_file_buttons,
-        "stations": stations,
-        "assigned_station_ids": assigned_station_ids,
+        "assigned_stations": assigned_stations,
+        "available_stations": available_stations,
         **engineering_nav_context(),
     })
 

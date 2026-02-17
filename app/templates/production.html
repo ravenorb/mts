@@ -29,6 +29,10 @@
     <td>
       <a class="small-link-btn" href="/production/pallet/{{pallet.id}}">Open</a>
       <a class="small-link-btn" href="/production/pallet/{{pallet.id}}/edit">Edit Pallet</a>
+      <form method="post" action="/production/pallet/{{pallet.id}}/delete" style="display:inline;" onsubmit="return confirm('Delete pallet {{pallet.pallet_code}}? This cannot be undone.');">
+        <input type="hidden" name="redirect_to" value="/production?tab=active" />
+        <button type="submit" class="small-link-btn danger-link-btn">Delete</button>
+      </form>
     </td>
   </tr>
   {% endfor %}
@@ -59,6 +63,10 @@
       {% if row.pallet %}
       <a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}">Open</a>
       <a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}/edit">Edit Pallet</a>
+      <form method="post" action="/production/pallet/{{row.pallet.id}}/delete" style="display:inline;" onsubmit="return confirm('Delete pallet {{row.pallet.pallet_code}}? This cannot be undone.');">
+        <input type="hidden" name="redirect_to" value="/production?tab=station-{{selected_station.id}}" />
+        <button type="submit" class="small-link-btn danger-link-btn">Delete</button>
+      </form>
       {% endif %}
     </td>
   </tr>

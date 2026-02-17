@@ -38,7 +38,7 @@
       <div>
         <strong>Assigned Route</strong>
         <div id="assigned-stations" class="queue-chip-row" style="min-width:260px; min-height:42px; border:1px dashed #bbb; padding:8px;">
-          {% for station in stations if station.id in assigned_station_ids %}
+          {% for station in assigned_stations %}
           <div class="queue-chip" draggable="true" data-station-id="{{station.id}}">{{station.station_name}}</div>
           {% endfor %}
         </div>
@@ -46,7 +46,7 @@
       <div>
         <strong>Available Stations</strong>
         <div id="available-stations" class="queue-chip-row" style="min-width:260px; min-height:42px; border:1px dashed #bbb; padding:8px;">
-          {% for station in stations if station.id not in assigned_station_ids %}
+          {% for station in available_stations %}
           <div class="queue-chip" draggable="true" data-station-id="{{station.id}}">{{station.station_name}}</div>
           {% endfor %}
         </div>
@@ -173,12 +173,25 @@
     chip.addEventListener('dragstart', () => { dragging = chip; });
   });
 
+  const getDropTarget = (container, y) => {
+    const chips = [...container.querySelectorAll('.queue-chip:not(.dragging)')];
+    return chips.find((chip) => {
+      const rect = chip.getBoundingClientRect();
+      return y < rect.top + (rect.height / 2);
+    }) || null;
+  };
+
   [assigned, available].forEach((container) => {
     container.addEventListener('dragover', (event) => event.preventDefault());
     container.addEventListener('drop', (event) => {
       event.preventDefault();
       if (!dragging) return;
-      container.appendChild(dragging);
+      const dropTarget = getDropTarget(container, event.clientY);
+      if (dropTarget) {
+        container.insertBefore(dragging, dropTarget);
+      } else {
+        container.appendChild(dragging);
+      }
     });
   });
 
