@@ -438,6 +438,25 @@ def ensure_pallet_parts_schema(db: Session):
     db.commit()
 
 
+def ensure_pallet_station_route_schema(db: Session):
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS pallet_station_routes (
+            id INTEGER PRIMARY KEY,
+            pallet_id INTEGER NOT NULL,
+            sequence_no INTEGER DEFAULT 1,
+            station_id INTEGER,
+            qty_completed FLOAT DEFAULT 0,
+            qty_scrap FLOAT DEFAULT 0,
+            status VARCHAR(40) DEFAULT 'staged',
+            location_id VARCHAR(20) DEFAULT '00',
+            FOREIGN KEY(pallet_id) REFERENCES pallets(id),
+            FOREIGN KEY(station_id) REFERENCES stations(id)
+        )
+    """))
+    db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_pallet_station_sequence ON pallet_station_routes(pallet_id, sequence_no)"))
+    db.commit()
+
+
 def ensure_default_stations(db: Session) -> list[models.Station]:
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     if stations:
@@ -491,6 +510,85 @@ def get_part_station_routes(db: Session, part_number: str) -> list[models.Statio
         models.Station.active.is_(True),
     ).order_by(models.PartStationRoute.route_order.asc(), models.PartStationRoute.id.asc()).all()
     return stations
+
+
+def get_pallet_part_rows(db: Session, pallet: models.Pallet) -> list[dict]:
+    part_rows = []
+    pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet.id).order_by(models.PalletPart.id.asc()).all()
+    for pallet_part in pallet_parts:
+        revision = db.query(models.PartRevision).filter_by(id=pallet_part.part_revision_id).first()
+        component_id = ""
+        if revision:
+            part_row = db.query(models.Part).filter_by(id=revision.part_id).first()
+            component_id = part_row.part_number if part_row else ""
+
+        part_rows.append({
+            "expected_qty": pallet_part.planned_quantity,
+            "qty_needed": pallet_part.external_quantity_needed,
+            "current_qty": pallet_part.actual_quantity,
+            "component_id": component_id,
+            "scrap_qty": pallet_part.scrap_quantity,
+        })
+
+    component_rows = [
+        row for row in part_rows
+        if row["component_id"] and row["component_id"] != (pallet.frame_part_number or "")
+    ]
+    component_rows_by_id = {row["component_id"]: row for row in component_rows}
+    try:
+        component_snapshot = json.loads(pallet.component_list_json or "[]")
+    except json.JSONDecodeError:
+        component_snapshot = []
+
+    for component in component_snapshot:
+        component_id = (component.get("component_id") or "").strip()
+        if not component_id:
+            continue
+        expected_qty = component.get("expected_quantity", 0)
+        existing_row = component_rows_by_id.get(component_id)
+        if existing_row:
+            if not existing_row["expected_qty"]:
+                existing_row["expected_qty"] = expected_qty
+            if not existing_row["qty_needed"]:
+                existing_row["qty_needed"] = component.get("qty_needed", 0)
+            continue
+        new_row = {
+            "expected_qty": expected_qty,
+            "qty_needed": component.get("qty_needed", component.get("external_quantity_needed", 0)),
+            "current_qty": 0,
+            "component_id": component_id,
+            "scrap_qty": 0,
+        }
+        component_rows.append(new_row)
+        component_rows_by_id[component_id] = new_row
+
+    if component_rows:
+        component_rows.sort(key=lambda row: row["component_id"])
+    else:
+        component_rows = part_rows
+    return component_rows
+
+
+def ensure_pallet_station_routing(db: Session, pallet: models.Pallet, fallback_station_id: int | None = None):
+    existing = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id).count()
+    if existing:
+        return
+
+    route_stations = get_part_station_routes(db, pallet.frame_part_number or "")
+    route_station_ids: list[int | None] = [station.id for station in route_stations]
+    if not route_station_ids and fallback_station_id:
+        route_station_ids = [fallback_station_id]
+
+    for sequence_no, station_id in enumerate(route_station_ids, start=1):
+        db.add(models.PalletStationRoute(
+            pallet_id=pallet.id,
+            sequence_no=sequence_no,
+            station_id=station_id,
+            qty_completed=0,
+            qty_scrap=0,
+            status="staged",
+            location_id="00",
+        ))
 
 
 def ensure_order_backlog_has_pallets(db: Session, stations: list[models.Station]):
@@ -641,6 +739,7 @@ def startup():
     ensure_station_schema(db)
     ensure_pallet_schema(db)
     ensure_pallet_parts_schema(db)
+    ensure_pallet_station_route_schema(db)
     ensure_employee_auth_schema(db)
     migrate_users_to_employees(db)
     create_default_admin(db)
@@ -874,10 +973,13 @@ def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
         raise HTTPException(404)
-    parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).all()
+    part_rows = get_pallet_part_rows(db, pallet)
+    ensure_pallet_station_routing(db, pallet, fallback_station_id=pallet.current_station_id)
+    db.commit()
+    route_rows = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet_id).order_by(models.PalletStationRoute.sequence_no.asc()).all()
     events = db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).order_by(models.PalletEvent.recorded_at.asc()).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
-    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "parts": parts, "events": events, "stations": stations, "errors": {}})
+    return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "part_rows": part_rows, "route_rows": route_rows, "events": events, "stations": stations, "errors": {}})
 
 
 @app.get("/production/pallet/{pallet_id}/edit", response_class=HTMLResponse)
@@ -886,61 +988,7 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
     if not pallet:
         raise HTTPException(404)
 
-    part_rows = []
-    pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).order_by(models.PalletPart.id.asc()).all()
-    for pallet_part in pallet_parts:
-        revision = db.query(models.PartRevision).filter_by(id=pallet_part.part_revision_id).first()
-        component_id = ""
-        if revision:
-            part_row = db.query(models.Part).filter_by(id=revision.part_id).first()
-            component_id = part_row.part_number if part_row else ""
-
-        part_rows.append({
-            "expected_qty": pallet_part.planned_quantity,
-            "qty_needed": pallet_part.external_quantity_needed,
-            "current_qty": pallet_part.actual_quantity,
-            "component_id": component_id,
-            "scrap_qty": pallet_part.scrap_quantity,
-        })
-
-    # Show component-level quantities for pallets created from HK MPF data.
-    component_rows = [
-        row for row in part_rows
-        if row["component_id"] and row["component_id"] != (pallet.frame_part_number or "")
-    ]
-
-    component_rows_by_id = {row["component_id"]: row for row in component_rows}
-    try:
-        component_snapshot = json.loads(pallet.component_list_json or "[]")
-    except json.JSONDecodeError:
-        component_snapshot = []
-
-    for component in component_snapshot:
-        component_id = (component.get("component_id") or "").strip()
-        if not component_id:
-            continue
-        expected_qty = component.get("expected_quantity", 0)
-        existing_row = component_rows_by_id.get(component_id)
-        if existing_row:
-            if not existing_row["expected_qty"]:
-                existing_row["expected_qty"] = expected_qty
-            if not existing_row["qty_needed"]:
-                existing_row["qty_needed"] = component.get("qty_needed", 0)
-            continue
-        new_row = {
-            "expected_qty": expected_qty,
-            "qty_needed": component.get("qty_needed", component.get("external_quantity_needed", 0)),
-            "current_qty": 0,
-            "component_id": component_id,
-            "scrap_qty": 0,
-        }
-        component_rows.append(new_row)
-        component_rows_by_id[component_id] = new_row
-
-    if component_rows:
-        component_rows.sort(key=lambda row: row["component_id"])
-    else:
-        component_rows = part_rows
+    component_rows = get_pallet_part_rows(db, pallet)
 
     mpf = db.query(models.MpfMaster).filter_by(id=pallet.mpf_master_id).first() if pallet.mpf_master_id else None
     raw_material = None
@@ -1043,6 +1091,7 @@ def production_pallet_delete(pallet_id: int, redirect_to: str = Form("/productio
     db.query(models.Queue).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.query(models.PalletPart).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
+    db.query(models.PalletStationRoute).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.query(models.PalletRevision).filter_by(pallet_id=pallet_id).delete(synchronize_session=False)
     db.delete(pallet)
     db.commit()
@@ -1059,6 +1108,7 @@ def production_create_pallet(part_revision_id: int = Form(...), quantity: float 
     db.commit()
     db.refresh(pallet)
     db.add(models.PalletPart(pallet_id=pallet.id, part_revision_id=part_revision_id, planned_quantity=quantity, actual_quantity=quantity, scrap_quantity=0))
+    ensure_pallet_station_routing(db, pallet, fallback_station_id=location_station_id)
     db.add(models.PalletEvent(pallet_id=pallet.id, station_id=location_station_id, event_type="created", quantity=quantity, recorded_by=user.username, notes="Manual pallet creation"))
     db.commit()
     create_traveler_file(db, pallet.id)
@@ -1198,6 +1248,8 @@ def production_create_order(
                 queue_position=int(max_position) + 1,
                 status="queued",
             ))
+
+        ensure_pallet_station_routing(db, pallet, fallback_station_id=first_station.id if first_station else None)
 
         db.commit()
     except HTTPException:
@@ -2476,7 +2528,14 @@ def ensure_storage_bins(db: Session, location: models.StorageLocation):
     for shelf_id in range(1, max(location.shelf_count, 0) + 1):
         for bin_id in range(1, max(location.bin_count, 0) + 1):
             if (shelf_id, bin_id) not in existing:
-                db.add(models.StorageBin(storage_location_id=location.id, shelf_id=shelf_id, bin_id=bin_id))
+                holder_id = f"{location.id}.{bin_id}" if location.shelf_count <= 1 else f"{location.id}.{shelf_id}.{bin_id}"
+                db.add(models.StorageBin(
+                    storage_location_id=location.id,
+                    shelf_id=shelf_id,
+                    bin_id=bin_id,
+                    pallet_id=holder_id,
+                    description="location holder",
+                ))
     db.commit()
 
 
