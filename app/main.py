@@ -826,13 +826,51 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
             "station_flags": station_flags,
         })
 
+    # Show component-level quantities for pallets created from HK MPF data.
+    component_rows = [
+        row for row in part_rows
+        if row["component_id"] and row["component_id"] != (pallet.frame_part_number or "")
+    ]
+
+    component_rows_by_id = {row["component_id"]: row for row in component_rows}
+    try:
+        component_snapshot = json.loads(pallet.component_list_json or "[]")
+    except json.JSONDecodeError:
+        component_snapshot = []
+
+    for component in component_snapshot:
+        component_id = (component.get("component_id") or "").strip()
+        if not component_id:
+            continue
+        expected_qty = component.get("expected_quantity", 0)
+        existing_row = component_rows_by_id.get(component_id)
+        if existing_row:
+            if not existing_row["expected_qty"]:
+                existing_row["expected_qty"] = expected_qty
+            continue
+        assigned_stations = {station.station_name for station in get_part_station_routes(db, component_id)}
+        station_flags = {station_name: (station_name in assigned_stations) for station_name in station_names}
+        new_row = {
+            "expected_qty": expected_qty,
+            "component_id": component_id,
+            "scrap_qty": 0,
+            "station_flags": station_flags,
+        }
+        component_rows.append(new_row)
+        component_rows_by_id[component_id] = new_row
+
+    if component_rows:
+        component_rows.sort(key=lambda row: row["component_id"])
+    else:
+        component_rows = part_rows
+
     return templates.TemplateResponse("pallet_edit.html", {
         "request": request,
         "user": user,
         "top_nav": TOP_NAV,
         "entity_groups": ENTITY_GROUPS,
         "pallet": pallet,
-        "part_rows": part_rows,
+        "part_rows": component_rows,
         "station_names": station_names,
     })
 

@@ -7,8 +7,8 @@
 
 <table>
   <tr>
-    <th>Expected Qty</th>
     <th>Component ID</th>
+    <th>Expected Qty</th>
     <th>Qty Scrap</th>
     {% for station_name in station_names %}
     <th>{{station_name}}</th>
@@ -16,8 +16,8 @@
   </tr>
   {% for row in part_rows %}
   <tr>
-    <td>{{row.expected_qty}}</td>
     <td>{{row.component_id or '-'}}</td>
+    <td>{{row.expected_qty}}</td>
     <td>{{row.scrap_qty}}</td>
     {% for station_name in station_names %}
     <td>{% if row.station_flags[station_name] %}✓{% else %}-{% endif %}</td>
