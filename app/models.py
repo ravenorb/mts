@@ -281,6 +281,7 @@ class Pallet(Base):
     component_list_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String(40), default="staged")
     current_station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
+    storage_bin_id: Mapped[int | None] = mapped_column(ForeignKey("storage_bins.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_by: Mapped[str] = mapped_column(String(80), default="system")
 

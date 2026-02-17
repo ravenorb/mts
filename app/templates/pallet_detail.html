@@ -3,7 +3,7 @@
 <h2>Pallet {{pallet.pallet_code}}</h2>
 <div class="cards">
   <div class="card"><div class="label">Status</div><div class="value">{{pallet.status}}</div></div>
-  <div class="card"><div class="label">Location / Station</div><div class="value">{{pallet.current_station_id or 'Staging'}}</div></div>
+  <div class="card"><div class="label">Location / Station</div><div class="value">{{location_label}}</div></div>
   <div class="card"><div class="label">Type</div><div class="value">{{pallet.pallet_type}}</div></div>
 </div>
 
@@ -60,14 +60,25 @@
 
 <h3>Move (Most Common Action)</h3>
 <form method="post" action="/production/pallet/{{pallet.id}}/move" class="panel-form">
-  <label>Move to station</label>
-  <select name="station_id" required>
-    <option value="">-- choose station --</option>
-    {% for st in stations %}<option value="{{st.id}}">{{st.station_name}}</option>{% endfor %}
+  <label>Destination type</label>
+  <select name="destination_type" required>
+    <option value="station">Station</option>
+    <option value="storage_bin">Pallet storage bin</option>
+  </select>
+
+  <label>Destination</label>
+  <select name="destination_id" required>
+    <option value="">-- choose destination --</option>
+    {% for st in stations %}<option value="{{st.id}}">{{station_label(st)}}</option>{% endfor %}
+    {% for b in available_bins %}<option value="{{b.id}}">BIN L{{b.storage_location_id}}-S{{b.shelf_id}}-B{{b.bin_id}}</option>{% endfor %}
   </select>
   <label>Notes (optional)</label>
   <input name="notes" placeholder="e.g. moved from staging rack B" />
   <button class="action-btn" type="submit">MOVE</button>
+</form>
+
+<form method="post" action="/production/pallet/{{pallet.id}}/release" style="margin-top:12px;">
+  <button class="action-btn" type="submit">RELEASE PALLET</button>
 </form>
 
 <div class="action-row">
