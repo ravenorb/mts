@@ -621,6 +621,17 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
     if selected_station:
         queue_rows = db.query(models.Queue).filter_by(station_id=selected_station.id).order_by(models.Queue.queue_position.asc()).all()
         queue_by_pallet_id = {row.pallet_id: row for row in queue_rows}
+        pallets_by_id = {
+            pallet.id: pallet
+            for pallet in db.query(models.Pallet).filter(models.Pallet.id.in_([row.pallet_id for row in queue_rows])).all()
+        }
+        for queue_row in queue_rows:
+            station_queue.append({
+                "queue": queue_row,
+                "pallet": pallets_by_id.get(queue_row.pallet_id),
+            })
+
+        pallet_ids_in_queue = {row.pallet_id for row in queue_rows}
         pallets_at_station = (
             db.query(models.Pallet)
             .filter(models.Pallet.current_station_id == selected_station.id)
@@ -628,6 +639,8 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
             .all()
         )
         for pallet_at_station in pallets_at_station:
+            if pallet_at_station.id in pallet_ids_in_queue:
+                continue
             queue_row = queue_by_pallet_id.get(pallet_at_station.id)
             station_queue.append({
                 "queue": queue_row,
