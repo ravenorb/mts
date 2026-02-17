@@ -987,7 +987,7 @@ def build_component_quantities(db: Session, frame_part_id: str, expected_quantit
             "expected_quantity": 0.0,
             "qty_needed": 0.0,
         })
-        existing["qty_needed"] = float(component.get("component_qty") or 0) * float(sheet_count or 0)
+        existing["qty_needed"] = float(component.get("component_qty") or 0) * float(expected_quantity or 0)
 
     return [component_map[key] for key in sorted(component_map.keys())]
 
@@ -1308,6 +1308,13 @@ def pallet_release_to_hk_queue(pallet_id: int, db: Session = Depends(get_db), us
     pallet.storage_bin_id = None
     pallet.current_station_id = None
     pallet.status = "queued"
+
+    route_rows = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id).order_by(models.PalletStationRoute.sequence_no.asc()).all()
+    for route_row in route_rows:
+        route_row.qty_completed = 0
+        route_row.qty_scrap = 0
+        route_row.status = "staged"
+        route_row.location_id = "00"
 
     first_route.status = "queued"
     first_route.location_id = f"Q{first_route.station_id}"
@@ -2604,6 +2611,8 @@ async def station_complete_pallet_submit(station_id: int, request: Request, db: 
 
     route_row = db.query(models.PalletStationRoute).filter_by(pallet_id=pallet.id, station_id=station_id).first()
     if route_row:
+        route_row.qty_completed = total_completed
+        route_row.qty_scrap = sum(float(qty_scrap_list[i] or 0) if i < len(qty_scrap_list) else 0 for i in range(len(component_ids)))
         route_row.status = "complete"
         route_row.location_id = f"S{station_id}"
 
