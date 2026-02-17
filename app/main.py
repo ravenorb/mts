@@ -416,6 +416,19 @@ def ensure_station_schema(db: Session):
     db.commit()
 
 
+def ensure_pallet_schema(db: Session):
+    pallet_columns = {row[1] for row in db.execute(text("PRAGMA table_info(pallets)"))}
+    if "mpf_master_id" not in pallet_columns:
+        db.execute(text("ALTER TABLE pallets ADD COLUMN mpf_master_id INTEGER"))
+    if "frame_part_number" not in pallet_columns:
+        db.execute(text("ALTER TABLE pallets ADD COLUMN frame_part_number VARCHAR(80) DEFAULT ''"))
+    if "expected_quantity" not in pallet_columns:
+        db.execute(text("ALTER TABLE pallets ADD COLUMN expected_quantity FLOAT DEFAULT 0"))
+    if "sheet_count" not in pallet_columns:
+        db.execute(text("ALTER TABLE pallets ADD COLUMN sheet_count FLOAT DEFAULT 0"))
+    db.commit()
+
+
 def ensure_default_stations(db: Session) -> list[models.Station]:
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     if stations:
@@ -482,6 +495,7 @@ def startup():
     Base.metadata.create_all(bind=engine)
     db = next(get_db())
     ensure_station_schema(db)
+    ensure_pallet_schema(db)
     ensure_employee_auth_schema(db)
     migrate_users_to_employees(db)
     create_default_admin(db)
@@ -506,6 +520,44 @@ def root(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "active": active, "hold": hold, "staged": staged, "in_progress": in_progress, "bottlenecks": bottlenecks, "station_load": station_load, "maintenance_open": maintenance_open, "low_stock": low_stock})
 
 
+def parse_sheet_size(sheet_size: str) -> tuple[float, float] | None:
+    numbers = re.findall(r"\d+(?:\.\d+)?", sheet_size or "")
+    if len(numbers) < 2:
+        return None
+    return float(numbers[0]), float(numbers[1])
+
+
+def build_station_queue_cards(db: Session, stations: list[models.Station]) -> list[dict]:
+    cards: list[dict] = []
+    for station in stations:
+        queue_rows = db.query(models.Queue).filter_by(station_id=station.id).order_by(models.Queue.queue_position.asc()).all()
+        in_progress = next((q for q in queue_rows if q.status == "in_progress"), None)
+        current_pallet = db.query(models.Pallet).filter_by(id=in_progress.pallet_id).first() if in_progress else None
+        current_operator = ""
+        if current_pallet:
+            last_started = db.query(models.PalletEvent).filter_by(
+                pallet_id=current_pallet.id,
+                station_id=station.id,
+                event_type="started",
+            ).order_by(models.PalletEvent.recorded_at.desc()).first()
+            current_operator = last_started.recorded_by if last_started else ""
+        waiting = [
+            {
+                "queue_id": row.id,
+                "pallet": db.query(models.Pallet).filter_by(id=row.pallet_id).first(),
+                "position": row.queue_position,
+            }
+            for row in queue_rows if row.status == "queued"
+        ]
+        cards.append({
+            "station": station,
+            "current_pallet": current_pallet,
+            "current_operator": current_operator,
+            "waiting": waiting,
+        })
+    return cards
+
+
 @app.get("/production", response_class=HTMLResponse)
 def production(request: Request, q: str = "", db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = None
@@ -517,7 +569,39 @@ def production(request: Request, q: str = "", db: Session = Depends(get_db), use
     next_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).limit(12).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    return templates.TemplateResponse("production.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "query": q, "found": pallet, "next_pallets": next_pallets, "stations": stations, "part_revisions": part_revisions, "errors": {}})
+    frame_parts = db.query(models.MpfMaster.part_id).filter(models.MpfMaster.part_id != "").distinct().order_by(models.MpfMaster.part_id.asc()).all()
+    station_queue_cards = build_station_queue_cards(db, stations)
+    return templates.TemplateResponse("production.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "query": q,
+        "found": pallet,
+        "next_pallets": next_pallets,
+        "stations": stations,
+        "part_revisions": part_revisions,
+        "frame_parts": [row[0] for row in frame_parts],
+        "station_queue_cards": station_queue_cards,
+        "errors": {},
+    })
+
+
+@app.get("/production/mpf-options/{frame_part_id}", response_class=JSONResponse)
+def production_mpf_options(frame_part_id: str, db: Session = Depends(get_db), user=Depends(require_login)):
+    masters = db.query(models.MpfMaster).filter_by(part_id=frame_part_id).order_by(models.MpfMaster.mpf_filename.asc()).all()
+    return {
+        "items": [
+            {
+                "id": mpf.id,
+                "filename": mpf.mpf_filename,
+                "qty_produced": mpf.qty_produced,
+                "material": mpf.material,
+                "sheet_size": mpf.sheet_size,
+            }
+            for mpf in masters
+        ]
+    }
 
 
 @app.get("/production/pallet/{pallet_id}", response_class=HTMLResponse)
@@ -555,6 +639,126 @@ def production_create_pallet(part_revision_id: int = Form(...), quantity: float 
     db.refresh(pallet)
     db.add(models.PalletPart(pallet_id=pallet.id, part_revision_id=part_revision_id, planned_quantity=quantity, actual_quantity=quantity, scrap_quantity=0))
     db.add(models.PalletEvent(pallet_id=pallet.id, station_id=location_station_id, event_type="created", quantity=quantity, recorded_by=user.username, notes="Manual pallet creation"))
+    db.commit()
+    create_traveler_file(db, pallet.id)
+    return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
+
+
+@app.post("/production/create-order")
+def production_create_order(
+    frame_part_id: str = Form(...),
+    mpf_master_id: int = Form(...),
+    expected_quantity: float = Form(...),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
+    mpf = db.query(models.MpfMaster).filter_by(id=mpf_master_id).first()
+    if not mpf or mpf.part_id != frame_part_id:
+        raise HTTPException(422, "Invalid HK MPF selection")
+    if mpf.qty_produced <= 0:
+        raise HTTPException(422, "Selected HK MPF has no qty produced value")
+    if expected_quantity <= 0:
+        raise HTTPException(422, "Expected quantity must be greater than zero")
+
+    sheet_count = expected_quantity / mpf.qty_produced
+    if abs(round(sheet_count) - sheet_count) > 1e-6:
+        raise HTTPException(422, "Expected quantity must be a multiple of qty produced")
+    sheet_count = float(round(sheet_count))
+
+    part = db.query(models.Part).filter_by(part_number=frame_part_id).first()
+    if not part:
+        raise HTTPException(422, f"Part {frame_part_id} is not defined in parts table")
+
+    revision = db.query(models.PartRevision).filter_by(part_id=part.id, is_current=True).first()
+    if not revision:
+        revision = db.query(models.PartRevision).filter_by(part_id=part.id).order_by(models.PartRevision.id.desc()).first()
+    if not revision:
+        raise HTTPException(422, f"No part revision exists for {frame_part_id}")
+
+    parsed_sheet = parse_sheet_size(mpf.sheet_size)
+    material_row = None
+    if parsed_sheet:
+        width, length = parsed_sheet
+        material_row = db.query(models.RawMaterial).filter(
+            models.RawMaterial.gauge == mpf.material,
+            ((models.RawMaterial.width == width) & (models.RawMaterial.length == length)) |
+            ((models.RawMaterial.width == length) & (models.RawMaterial.length == width)),
+        ).first()
+
+    if material_row:
+        if material_row.qty_on_hand < sheet_count:
+            raise HTTPException(422, "Not enough raw material sheets on hand")
+        material_row.qty_on_hand -= sheet_count
+
+    order = models.ProductionOrder(part_revision_id=revision.id, quantity_ordered=expected_quantity, status="planned")
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+
+    pallet_code = f"P-{int(datetime.utcnow().timestamp())}-{order.id}"
+    first_station = db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).first()
+    pallet = models.Pallet(
+        pallet_code=pallet_code,
+        pallet_type="manual",
+        production_order_id=order.id,
+        mpf_master_id=mpf.id,
+        frame_part_number=frame_part_id,
+        expected_quantity=expected_quantity,
+        sheet_count=sheet_count,
+        status="staged",
+        current_station_id=first_station.id if first_station else None,
+        created_by=user.username,
+    )
+    db.add(pallet)
+    db.commit()
+    db.refresh(pallet)
+
+    details = db.query(models.MpfDetail).filter_by(mpf_master_id=mpf.id).order_by(models.MpfDetail.id.asc()).all()
+    component_snapshot = []
+    for detail in details:
+        component_snapshot.append({
+            "component_id": detail.component_id,
+            "qty_per_sheet": detail.sheet_qty,
+            "expected_quantity": detail.sheet_qty * sheet_count,
+        })
+
+    db.add(models.PalletPart(
+        pallet_id=pallet.id,
+        part_revision_id=revision.id,
+        planned_quantity=expected_quantity,
+        actual_quantity=0,
+        scrap_quantity=0,
+    ))
+    db.add(models.PalletRevision(
+        pallet_id=pallet.id,
+        revision_code="R1",
+        snapshot_json=json.dumps({
+            "frame_part_number": frame_part_id,
+            "expected_quantity": expected_quantity,
+            "sheet_count": sheet_count,
+            "components": component_snapshot,
+        }),
+        created_by=user.username,
+    ))
+    db.add(models.PalletEvent(
+        pallet_id=pallet.id,
+        station_id=first_station.id if first_station else None,
+        event_type="created",
+        quantity=expected_quantity,
+        recorded_by=user.username,
+        notes=f"Order created from HK MPF {mpf.mpf_filename}",
+    ))
+
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).all()
+    for station in stations:
+        max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station.id).scalar() or 0
+        db.add(models.Queue(
+            station_id=station.id,
+            pallet_id=pallet.id,
+            queue_position=int(max_position) + 1,
+            status="queued",
+        ))
+
     db.commit()
     create_traveler_file(db, pallet.id)
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
