@@ -764,6 +764,29 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
     ensure_order_backlog_has_pallets(db, stations)
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
     active_pallets = db.query(models.Pallet).order_by(models.Pallet.created_at.desc()).all()
+    production_orders = db.query(models.ProductionOrder).order_by(models.ProductionOrder.created_at.desc()).all()
+
+    part_revisions_by_id = {
+        row.id: row
+        for row in db.query(models.PartRevision).filter(
+            models.PartRevision.id.in_([order.part_revision_id for order in production_orders])
+        ).all()
+    } if production_orders else {}
+    part_ids = [revision.part_id for revision in part_revisions_by_id.values()]
+    parts_by_id = {
+        row.id: row
+        for row in db.query(models.Part).filter(models.Part.id.in_(part_ids)).all()
+    } if part_ids else {}
+
+    order_rows = []
+    for order in production_orders:
+        revision = part_revisions_by_id.get(order.part_revision_id)
+        part = parts_by_id.get(revision.part_id) if revision else None
+        order_rows.append({
+            "order": order,
+            "part_number": part.part_number if part else "-",
+            "revision_code": revision.revision_code if revision else "-",
+        })
 
     selected_station = None
     station_queue = []
@@ -825,6 +848,7 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
         "tab": tab,
         "selected_station": selected_station,
         "station_queue": station_queue,
+        "order_rows": order_rows,
     })
 
 

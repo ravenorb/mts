@@ -7,6 +7,7 @@
 <div class="page-toolbar maintenance-submenu-row">
   <div class="action-row">
   <a class="action-btn secondary {% if tab == 'active' %}active-tab{% endif %}" href="/production?tab=active">Active Pallets</a>
+  <a class="action-btn secondary {% if tab == 'orders' %}active-tab{% endif %}" href="/production?tab=orders">Orders</a>
   {% for station in stations %}
   <a class="action-btn secondary {% if tab == ('station-' ~ station.id) %}active-tab{% endif %}" href="/production?tab=station-{{station.id}}">{{station.station_name}}</a>
   {% endfor %}
@@ -31,6 +32,29 @@
       <a class="small-link-btn" href="/production/pallet/{{pallet.id}}/edit">Edit Pallet</a>
       <form method="post" action="/production/pallet/{{pallet.id}}/delete" style="display:inline;" onsubmit="return confirm('Delete pallet {{pallet.pallet_code}}? This cannot be undone.');">
         <input type="hidden" name="redirect_to" value="/production?tab=active" />
+        <button type="submit" class="small-link-btn danger-link-btn">Delete</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% elif tab == 'orders' %}
+<h3>Production Orders</h3>
+<table>
+  <tr>
+    <th>Order ID</th><th>Part</th><th>Revision</th><th>Quantity</th><th>Status</th><th>Scheduled Start</th><th>Actions</th>
+  </tr>
+  {% for row in order_rows %}
+  <tr>
+    <td>{{row.order.id}}</td>
+    <td>{{row.part_number}}</td>
+    <td>{{row.revision_code}}</td>
+    <td>{{row.order.quantity_ordered}}</td>
+    <td>{{row.order.status}}</td>
+    <td>{{row.order.scheduled_start}}</td>
+    <td>
+      <a class="small-link-btn" href="/entity/production_orders/{{row.order.id}}/edit">Edit</a>
+      <form method="post" action="/entity/production_orders/{{row.order.id}}/delete" style="display:inline;" onsubmit="return confirm('Delete production order #{{row.order.id}}? This cannot be undone.');">
         <button type="submit" class="small-link-btn danger-link-btn">Delete</button>
       </form>
     </td>
