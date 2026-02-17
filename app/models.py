@@ -432,8 +432,8 @@ class StorageBin(Base):
     shelf_id: Mapped[int] = mapped_column(Integer)
     bin_id: Mapped[int] = mapped_column(Integer)
     qty: Mapped[float] = mapped_column(Float, default=0)
-    pallet_id: Mapped[str] = mapped_column(String(80), default="")
-    part_number: Mapped[str] = mapped_column(String(80), default="")
+    location_id: Mapped[str] = mapped_column(String(80), default="")
+    component_id: Mapped[str] = mapped_column(String(80), default="")
     description: Mapped[str] = mapped_column(String(200), default="")
 
 

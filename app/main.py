@@ -459,6 +459,20 @@ def ensure_pallet_station_route_schema(db: Session):
     db.commit()
 
 
+def ensure_storage_bin_schema(db: Session):
+    storage_bin_columns = {row[1] for row in db.execute(text("PRAGMA table_info(storage_bins)"))}
+    if "location_id" not in storage_bin_columns:
+        db.execute(text("ALTER TABLE storage_bins ADD COLUMN location_id VARCHAR(80) DEFAULT ''"))
+    if "component_id" not in storage_bin_columns:
+        db.execute(text("ALTER TABLE storage_bins ADD COLUMN component_id VARCHAR(80) DEFAULT ''"))
+
+    if "pallet_id" in storage_bin_columns:
+        db.execute(text("UPDATE storage_bins SET location_id = COALESCE(NULLIF(location_id, ''), COALESCE(pallet_id, ''))"))
+    if "part_number" in storage_bin_columns:
+        db.execute(text("UPDATE storage_bins SET component_id = COALESCE(NULLIF(component_id, ''), COALESCE(part_number, ''))"))
+    db.commit()
+
+
 def ensure_default_stations(db: Session) -> list[models.Station]:
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     if stations:
@@ -613,17 +627,17 @@ def get_available_pallet_bins(db: Session, include_bin_id: int | None = None, hk
     bins = query.order_by(models.StorageBin.storage_location_id.asc(), models.StorageBin.shelf_id.asc(), models.StorageBin.bin_id.asc()).all()
     return [
         b for b in bins
-        if not (b.pallet_id or "").strip() or (include_bin_id and b.id == include_bin_id)
+        if not (b.component_id or "").strip() or (include_bin_id and b.id == include_bin_id)
     ]
 
 
 def clear_pallet_storage_bin(db: Session, pallet: models.Pallet):
-    db.query(models.StorageBin).filter(models.StorageBin.pallet_id == pallet.pallet_code).update({models.StorageBin.pallet_id: ""}, synchronize_session=False)
+    db.query(models.StorageBin).filter(models.StorageBin.component_id == pallet.pallet_code).update({models.StorageBin.component_id: ""}, synchronize_session=False)
 
 
 def assign_pallet_to_storage_bin(db: Session, pallet: models.Pallet, storage_bin: models.StorageBin):
     clear_pallet_storage_bin(db, pallet)
-    storage_bin.pallet_id = pallet.pallet_code
+    storage_bin.component_id = pallet.pallet_code
     pallet.storage_bin_id = storage_bin.id
     pallet.current_station_id = None
 
@@ -820,6 +834,7 @@ def startup():
     ensure_pallet_schema(db)
     ensure_pallet_parts_schema(db)
     ensure_pallet_station_route_schema(db)
+    ensure_storage_bin_schema(db)
     ensure_employee_auth_schema(db)
     migrate_users_to_employees(db)
     create_default_admin(db)
@@ -1172,7 +1187,7 @@ def pallet_move(
         location = db.query(models.StorageLocation).filter_by(id=storage_bin.storage_location_id).first()
         if not location or not location.pallet_storage:
             raise HTTPException(422, "Selected bin is not a pallet storage location")
-        occupied_by_other = (storage_bin.pallet_id or "").strip() and storage_bin.id != pallet.storage_bin_id
+        occupied_by_other = (storage_bin.component_id or "").strip() and storage_bin.id != pallet.storage_bin_id
         if occupied_by_other:
             raise HTTPException(422, "Selected bin is occupied")
         assign_pallet_to_storage_bin(db, pallet, storage_bin)
@@ -1320,6 +1335,8 @@ def production_create_order(
         pallet.pallet_code = f"P-{int(datetime.utcnow().timestamp())}-{order.id}"
 
         empty_storage_bin = next(iter(get_available_pallet_bins(db, exclude_hk=True)), None)
+        if not empty_storage_bin:
+            empty_storage_bin = next(iter(get_available_pallet_bins(db)), None)
         if not empty_storage_bin:
             raise HTTPException(422, "No available pallet storage bins found for new orders")
         assign_pallet_to_storage_bin(db, pallet, empty_storage_bin)
@@ -2849,8 +2866,8 @@ async def storage_bin_edit(bin_id: int, request: Request, db: Session = Depends(
         raise HTTPException(404)
     form = await request.form()
     row.qty = float(form.get("qty") or 0)
-    row.pallet_id = (form.get("pallet_id") or "").strip()
-    row.part_number = (form.get("part_number") or "").strip()
+    row.location_id = (form.get("location_id") or "").strip()
+    row.component_id = (form.get("component_id") or "").strip()
     row.description = (form.get("description") or "").strip()
     db.commit()
     return RedirectResponse(f"/inventory/locations/{row.storage_location_id}", status_code=302)

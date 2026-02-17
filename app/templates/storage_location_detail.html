@@ -5,15 +5,15 @@
 {% for shelf_id, bins in shelves.items() %}
 <h3>Shelf {{shelf_id}}</h3>
 <table>
-  <tr><th>Shelf ID</th><th>Bin ID</th><th>Qty</th><th>Pallet ID</th><th>Part Number</th><th>Description</th><th>Edit</th></tr>
+  <tr><th>Shelf ID</th><th>Bin ID</th><th>Qty</th><th>Location ID</th><th>Component ID</th><th>Description</th><th>Edit</th></tr>
   {% for b in bins %}
   <tr>
     <form method="post" action="/inventory/storage-bins/{{b.id}}/edit">
       <td>{{b.shelf_id}}</td>
       <td>{{b.bin_id}}</td>
       <td><input name="qty" value="{{b.qty}}" /></td>
-      <td><input name="pallet_id" value="{{b.pallet_id}}" /></td>
-      <td><input name="part_number" value="{{b.part_number}}" /></td>
+      <td><input name="location_id" value="{{b.location_id}}" /></td>
+      <td><input name="component_id" value="{{b.component_id}}" /></td>
       <td><input name="description" value="{{b.description}}" /></td>
       <td><button>Edit</button></td>
     </form>
