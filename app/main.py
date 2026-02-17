@@ -569,7 +569,28 @@ def production(request: Request, q: str = "", db: Session = Depends(get_db), use
     next_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).limit(12).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
-    frame_parts = db.query(models.MpfMaster.part_id).filter(models.MpfMaster.part_id != "").distinct().order_by(models.MpfMaster.part_id.asc()).all()
+    frame_parts_from_mpf = {
+        row[0]
+        for row in db.query(models.MpfMaster.part_id)
+        .filter(models.MpfMaster.part_id.isnot(None), models.MpfMaster.part_id != "")
+        .distinct()
+        .all()
+    }
+    frame_parts_from_parts = {
+        row[0]
+        for row in db.query(models.Part.part_number)
+        .filter(models.Part.part_number.isnot(None), models.Part.part_number != "", models.Part.active.is_(True))
+        .distinct()
+        .all()
+    }
+    frame_parts_from_part_master = {
+        row[0]
+        for row in db.query(models.PartMaster.part_id)
+        .filter(models.PartMaster.part_id.isnot(None), models.PartMaster.part_id != "")
+        .distinct()
+        .all()
+    }
+    frame_parts = sorted(frame_parts_from_mpf | frame_parts_from_parts | frame_parts_from_part_master)
     station_queue_cards = build_station_queue_cards(db, stations)
     return templates.TemplateResponse("production.html", {
         "request": request,
@@ -581,7 +602,7 @@ def production(request: Request, q: str = "", db: Session = Depends(get_db), use
         "next_pallets": next_pallets,
         "stations": stations,
         "part_revisions": part_revisions,
-        "frame_parts": [row[0] for row in frame_parts],
+        "frame_parts": frame_parts,
         "station_queue_cards": station_queue_cards,
         "errors": {},
     })
@@ -667,13 +688,37 @@ def production_create_order(
 
     part = db.query(models.Part).filter_by(part_number=frame_part_id).first()
     if not part:
-        raise HTTPException(422, f"Part {frame_part_id} is not defined in parts table")
+        engineering_part = db.query(models.PartMaster).filter_by(part_id=frame_part_id).first()
+        if engineering_part:
+            part = models.Part(part_number=engineering_part.part_id, description=engineering_part.description or "", active=True)
+            db.add(part)
+            db.flush()
+
+            auto_revision = models.PartRevision(
+                part_id=part.id,
+                revision_code=f"R{max(engineering_part.cur_rev, 0)}",
+                is_current=True,
+                released_by=user.username,
+                change_notes="Auto-created from engineering part_master during order creation",
+            )
+            db.add(auto_revision)
+            db.flush()
+        else:
+            raise HTTPException(422, f"Part {frame_part_id} is not defined in parts or engineering part tables")
 
     revision = db.query(models.PartRevision).filter_by(part_id=part.id, is_current=True).first()
     if not revision:
         revision = db.query(models.PartRevision).filter_by(part_id=part.id).order_by(models.PartRevision.id.desc()).first()
     if not revision:
-        raise HTTPException(422, f"No part revision exists for {frame_part_id}")
+        revision = models.PartRevision(
+            part_id=part.id,
+            revision_code="R0",
+            is_current=True,
+            released_by=user.username,
+            change_notes="Auto-created default revision during order creation",
+        )
+        db.add(revision)
+        db.flush()
 
     parsed_sheet = parse_sheet_size(mpf.sheet_size)
     material_row = None

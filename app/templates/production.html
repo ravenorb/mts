@@ -147,6 +147,10 @@
     mpfSelect.innerHTML = '<option value="">-- select HK MPF --</option>' + currentMpfOptions.map((item) => (
       `<option value="${item.id}">${item.filename} | qty produced ${item.qty_produced} | ${item.material || 'n/a'} ${item.sheet_size || ''}</option>`
     )).join('');
+    if (currentMpfOptions.length === 1) {
+      mpfSelect.value = String(currentMpfOptions[0].id);
+      mpfSelect.dispatchEvent(new Event('change'));
+    }
   });
 
   mpfSelect?.addEventListener('change', () => {

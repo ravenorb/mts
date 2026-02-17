@@ -17,7 +17,19 @@ def _load_runtime_settings() -> dict:
 
 
 runtime_settings = _load_runtime_settings()
-SQL_DATA_PATH = runtime_settings.get("SQL_DATA_PATH") or os.getenv("SQL_DATA_PATH", "/data/sql/mts.db")
+configured_sql_path = (runtime_settings.get("SQL_DATA_PATH") or os.getenv("SQL_DATA_PATH") or "").strip()
+default_sql_path = "/data/sql/mts.db"
+repo_sql_path = str(Path(__file__).resolve().parents[1] / "data/sql/mts.db")
+
+if configured_sql_path:
+    SQL_DATA_PATH = configured_sql_path
+elif Path(default_sql_path).exists():
+    SQL_DATA_PATH = default_sql_path
+elif Path(repo_sql_path).exists():
+    SQL_DATA_PATH = repo_sql_path
+else:
+    SQL_DATA_PATH = default_sql_path
+
 os.makedirs(os.path.dirname(SQL_DATA_PATH), exist_ok=True)
 
 DATABASE_URL = f"sqlite:///{SQL_DATA_PATH}"
