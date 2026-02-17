@@ -614,6 +614,7 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
 
     selected_station = None
     station_queue = []
+    all_queue_rows = db.query(models.Queue).order_by(models.Queue.station_id.asc(), models.Queue.queue_position.asc()).all()
     if tab.startswith("station-"):
         station_id = tab.split("station-", 1)[1]
         if station_id.isdigit():
@@ -685,6 +686,7 @@ def production(request: Request, q: str = "", tab: str = "active", db: Session =
         "tab": tab,
         "selected_station": selected_station,
         "station_queue": station_queue,
+        "all_queue_rows": all_queue_rows,
     })
 
 
