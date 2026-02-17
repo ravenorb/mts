@@ -47,6 +47,8 @@
     <th>Pallet ID</th>
     <th>Sequence #</th>
     <th>Station ID</th>
+    <th>Qty Completed</th>
+    <th>Qty Scrap</th>
     <th>Status</th>
     <th>Location ID</th>
   </tr>
@@ -55,6 +57,8 @@
     <td>{{route.pallet_id}}</td>
     <td>{{route.sequence_no}}</td>
     <td>{{route.station_id or '-'}}</td>
+    <td>{{route.qty_completed or 0}}</td>
+    <td>{{route.qty_scrap or 0}}</td>
     <td>{{route.status}}</td>
     <td>{{route.location_id}}</td>
   </tr>
