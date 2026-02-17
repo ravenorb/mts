@@ -103,3 +103,8 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 
 .hk-components-header{display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px}
 .hk-components-header h3{margin:0}
+
+.station-queue-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-bottom:14px}
+.station-queue-card{background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:10px}
+.queue-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;min-height:38px;padding:6px;border:1px dashed #cbd5e1;border-radius:6px;background:#f8fafc}
+.queue-chip{padding:6px 10px;border-radius:999px;background:#dbeafe;border:1px solid #93c5fd;cursor:grab;font-size:12px}

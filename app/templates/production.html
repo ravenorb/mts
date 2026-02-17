@@ -1,6 +1,10 @@
 {% extends 'base.html' %}
 {% block content %}
-<h2>Production</h2>
+<div class="page-toolbar">
+  <h2>Production</h2>
+  <button id="open-order-modal" type="button">Create Order</button>
+</div>
+
 <form method="get" action="/production" class="scan-form">
   <label>Scan QR OR type pallet</label>
   <input name="q" value="{{query}}" placeholder="P-10452 or pallet id" autofocus />
@@ -15,6 +19,35 @@
 {% elif query %}
 <div class="form-error-banner">No pallet found for "{{query}}". Check scan quality or code format.</div>
 {% endif %}
+
+<dialog id="create-order-modal" class="modal-dialog">
+  <form method="post" action="/production/create-order" class="panel-form" id="create-order-form">
+    <h3>Create Production Order</h3>
+    <label>Frame part ID</label>
+    <select name="frame_part_id" id="frame-part-id" required>
+      <option value="">-- select frame part --</option>
+      {% for part_id in frame_parts %}
+        <option value="{{part_id}}">{{part_id}}</option>
+      {% endfor %}
+    </select>
+
+    <label>HK MPF file</label>
+    <select name="mpf_master_id" id="mpf-master-id" required>
+      <option value="">-- select frame part first --</option>
+    </select>
+
+    <label>Expected quantity</label>
+    <select name="expected_quantity" id="expected-quantity" required>
+      <option value="">-- select HK MPF first --</option>
+    </select>
+    <div class="field-help" id="mpf-help">Quantities are generated as multiples of qty produced.</div>
+
+    <div class="action-row">
+      <button type="submit">Create pallet + order</button>
+      <button type="button" id="cancel-order-modal">Cancel</button>
+    </div>
+  </form>
+</dialog>
 
 <h3>Create Manual Pallet (Supervisor)</h3>
 <form method="post" action="/production/create-pallet" class="panel-form">
@@ -37,13 +70,119 @@
   <button type="submit">Create + Print traveler</button>
 </form>
 
+<h3>Station Production Queues</h3>
+<div class="station-queue-grid">
+  {% for card in station_queue_cards %}
+  <div class="station-queue-card" data-station-id="{{card.station.id}}">
+    <table>
+      <tr>
+        <th>station id</th>
+        <th>station name</th>
+        <th>current pallet</th>
+        <th>current operator</th>
+      </tr>
+      <tr>
+        <td>{{card.station.id}}</td>
+        <td>{{card.station.station_name}}</td>
+        <td>{{card.current_pallet.pallet_code if card.current_pallet else '-'}}</td>
+        <td>{{card.current_operator or '-'}}</td>
+      </tr>
+    </table>
+    <div class="queue-chip-row" data-station-id="{{card.station.id}}">
+      {% for item in card.waiting %}
+      <div class="queue-chip" draggable="true" data-queue-id="{{item.queue_id}}" title="Queue position {{item.position}}">
+        {{item.pallet.pallet_code if item.pallet else ('Queue #' ~ item.queue_id)}}
+      </div>
+      {% endfor %}
+      {% if not card.waiting %}
+      <div class="field-help">No queued pallets.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
 <h3>Next Pallets</h3>
 <div class="grid-list">
   {% for p in next_pallets %}
     <a class="quick-pallet" href="/production/pallet/{{p.id}}">
       <strong>{{p.pallet_code}}</strong>
       <span>Status: {{p.status}}</span>
+      {% if p.frame_part_number %}<span>Frame: {{p.frame_part_number}}</span>{% endif %}
+      {% if p.expected_quantity %}<span>Expected: {{p.expected_quantity}}</span>{% endif %}
     </a>
   {% endfor %}
 </div>
+
+<script>
+(() => {
+  const modal = document.getElementById('create-order-modal');
+  const openBtn = document.getElementById('open-order-modal');
+  const cancelBtn = document.getElementById('cancel-order-modal');
+  const framePartSelect = document.getElementById('frame-part-id');
+  const mpfSelect = document.getElementById('mpf-master-id');
+  const expectedQtySelect = document.getElementById('expected-quantity');
+  const mpfHelp = document.getElementById('mpf-help');
+
+  openBtn?.addEventListener('click', () => modal?.showModal());
+  cancelBtn?.addEventListener('click', () => modal?.close());
+
+  let currentMpfOptions = [];
+  framePartSelect?.addEventListener('change', async () => {
+    const framePart = framePartSelect.value;
+    mpfSelect.innerHTML = '<option value="">-- loading --</option>';
+    expectedQtySelect.innerHTML = '<option value="">-- select HK MPF first --</option>';
+    currentMpfOptions = [];
+    if (!framePart) {
+      mpfSelect.innerHTML = '<option value="">-- select frame part first --</option>';
+      return;
+    }
+    const response = await fetch(`/production/mpf-options/${encodeURIComponent(framePart)}`);
+    const payload = await response.json();
+    currentMpfOptions = payload.items || [];
+    if (!currentMpfOptions.length) {
+      mpfSelect.innerHTML = '<option value="">-- no HK MPF files found --</option>';
+      return;
+    }
+    mpfSelect.innerHTML = '<option value="">-- select HK MPF --</option>' + currentMpfOptions.map((item) => (
+      `<option value="${item.id}">${item.filename} | qty produced ${item.qty_produced} | ${item.material || 'n/a'} ${item.sheet_size || ''}</option>`
+    )).join('');
+  });
+
+  mpfSelect?.addEventListener('change', () => {
+    const selected = currentMpfOptions.find((item) => String(item.id) === mpfSelect.value);
+    expectedQtySelect.innerHTML = '<option value="">-- select expected quantity --</option>';
+    if (!selected || !selected.qty_produced || selected.qty_produced <= 0) {
+      mpfHelp.textContent = 'Selected HK MPF has no qty produced value.';
+      return;
+    }
+    const step = Number(selected.qty_produced);
+    const options = [];
+    for (let multiplier = 1; multiplier <= 25; multiplier += 1) {
+      const qty = (step * multiplier).toFixed(2);
+      options.push(`<option value="${qty}">${qty} (${multiplier} sheet${multiplier > 1 ? 's' : ''})</option>`);
+    }
+    expectedQtySelect.innerHTML += options.join('');
+    mpfHelp.textContent = `Qty produced per sheet: ${step}. Choose desired multiple.`;
+  });
+
+  document.querySelectorAll('.queue-chip-row').forEach((container) => {
+    let dragChip = null;
+    container.querySelectorAll('.queue-chip').forEach((chip) => {
+      chip.addEventListener('dragstart', () => { dragChip = chip; });
+      chip.addEventListener('dragover', (event) => event.preventDefault());
+      chip.addEventListener('drop', async () => {
+        if (!dragChip || dragChip === chip) return;
+        container.insertBefore(dragChip, chip);
+        const order = [...container.querySelectorAll('.queue-chip')].map((node) => Number(node.dataset.queueId));
+        await fetch(`/stations/${container.dataset.stationId}/queue-reorder`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({order})
+        });
+      });
+    });
+  });
+})();
+</script>
 {% endblock %}
