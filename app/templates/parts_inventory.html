@@ -13,7 +13,7 @@
     <td><input type="number" step="0.01" name="qty_to_weld" value="{{inv.qty_to_weld if inv else 0}}" form="inv-{{part.id}}"/></td>
     <td>
       <form id="inv-{{part.id}}" method="post" action="/inventory/parts/{{part.id}}/edit">
-        <button type="submit">Edit</button>
+        <button type="submit">Save</button>
       </form>
     </td>
   </tr>
