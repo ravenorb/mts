@@ -6,10 +6,18 @@
 </div>
 
 <form method="get" action="/production" class="scan-form">
+  <input type="hidden" name="tab" value="{{tab}}" />
   <label>Scan QR OR type pallet</label>
   <input name="q" value="{{query}}" placeholder="P-10452 or pallet id" autofocus />
   <button type="submit">Find</button>
 </form>
+
+<div class="action-row" style="margin:12px 0;">
+  <a class="action-btn {% if tab == 'active' %}secondary{% endif %}" href="/production?tab=active">Active Pallets</a>
+  {% for station in stations %}
+  <a class="action-btn {% if tab == ('station-' ~ station.id) %}secondary{% endif %}" href="/production?tab=station-{{station.id}}">{{station.station_name}}</a>
+  {% endfor %}
+</div>
 
 {% if found %}
 <div class="card">
@@ -18,6 +26,45 @@
 </div>
 {% elif query %}
 <div class="form-error-banner">No pallet found for "{{query}}". Check scan quality or code format.</div>
+{% endif %}
+
+{% if tab == 'active' %}
+<h3>All Active Pallets</h3>
+<table>
+  <tr>
+    <th>Pallet</th><th>Status</th><th>Frame Part</th><th>Expected Qty</th><th>Station</th><th>Actions</th>
+  </tr>
+  {% for pallet in active_pallets %}
+  <tr>
+    <td>{{pallet.pallet_code}}</td>
+    <td>{{pallet.status}}</td>
+    <td>{{pallet.frame_part_number or '-'}}</td>
+    <td>{{pallet.expected_quantity or '-'}}</td>
+    <td>{{pallet.current_station_id or '-'}}</td>
+    <td>
+      <a class="small-link-btn" href="/production/pallet/{{pallet.id}}">Open</a>
+      <a class="small-link-btn" href="/production/pallet/{{pallet.id}}/edit">Edit Pallet</a>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% elif selected_station %}
+<h3>{{selected_station.station_name}} Queue</h3>
+<table>
+  <tr>
+    <th>Queue Pos</th><th>Pallet</th><th>Status</th><th>Frame Part</th><th>Expected Qty</th><th>Actions</th>
+  </tr>
+  {% for row in station_queue %}
+  <tr>
+    <td>{{row.queue.queue_position}}</td>
+    <td>{{row.pallet.pallet_code if row.pallet else '-'}}</td>
+    <td>{{row.queue.status}}</td>
+    <td>{{row.pallet.frame_part_number if row.pallet else '-'}}</td>
+    <td>{{row.pallet.expected_quantity if row.pallet else '-'}}</td>
+    <td>{% if row.pallet %}<a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}">Open</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
 {% endif %}
 
 <dialog id="create-order-modal" class="modal-dialog">
@@ -48,71 +95,6 @@
     </div>
   </form>
 </dialog>
-
-<h3>Create Manual Pallet (Supervisor)</h3>
-<form method="post" action="/production/create-pallet" class="panel-form">
-  <label>Part revision</label>
-  <select name="part_revision_id" required>
-    <option value="">-- select revision --</option>
-    {% for p in part_revisions %}
-      <option value="{{p.id}}">{{p.id}} — Rev {{p.revision_code}}</option>
-    {% endfor %}
-  </select>
-  <label>Quantity</label>
-  <input name="quantity" type="number" step="0.01" min="0.01" required />
-  <label>Start station</label>
-  <select name="location_station_id">
-    <option value="">-- staged / no station --</option>
-    {% for st in stations %}
-      <option value="{{st.id}}">{{st.station_name}}</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Create + Print traveler</button>
-</form>
-
-<h3>Station Production Queues</h3>
-<div class="station-queue-grid">
-  {% for card in station_queue_cards %}
-  <div class="station-queue-card" data-station-id="{{card.station.id}}">
-    <table>
-      <tr>
-        <th>station id</th>
-        <th>station name</th>
-        <th>current pallet</th>
-        <th>current operator</th>
-      </tr>
-      <tr>
-        <td>{{card.station.id}}</td>
-        <td>{{card.station.station_name}}</td>
-        <td>{{card.current_pallet.pallet_code if card.current_pallet else '-'}}</td>
-        <td>{{card.current_operator or '-'}}</td>
-      </tr>
-    </table>
-    <div class="queue-chip-row" data-station-id="{{card.station.id}}">
-      {% for item in card.waiting %}
-      <div class="queue-chip" draggable="true" data-queue-id="{{item.queue_id}}" title="Queue position {{item.position}}">
-        {{item.pallet.pallet_code if item.pallet else ('Queue #' ~ item.queue_id)}}
-      </div>
-      {% endfor %}
-      {% if not card.waiting %}
-      <div class="field-help">No queued pallets.</div>
-      {% endif %}
-    </div>
-  </div>
-  {% endfor %}
-</div>
-
-<h3>Next Pallets</h3>
-<div class="grid-list">
-  {% for p in next_pallets %}
-    <a class="quick-pallet" href="/production/pallet/{{p.id}}">
-      <strong>{{p.pallet_code}}</strong>
-      <span>Status: {{p.status}}</span>
-      {% if p.frame_part_number %}<span>Frame: {{p.frame_part_number}}</span>{% endif %}
-      {% if p.expected_quantity %}<span>Expected: {{p.expected_quantity}}</span>{% endif %}
-    </a>
-  {% endfor %}
-</div>
 
 <script>
 (() => {
@@ -147,10 +129,6 @@
     mpfSelect.innerHTML = '<option value="">-- select HK MPF --</option>' + currentMpfOptions.map((item) => (
       `<option value="${item.id}">${item.filename} | qty produced ${item.qty_produced} | ${item.material || 'n/a'} ${item.sheet_size || ''}</option>`
     )).join('');
-    if (currentMpfOptions.length === 1) {
-      mpfSelect.value = String(currentMpfOptions[0].id);
-      mpfSelect.dispatchEvent(new Event('change'));
-    }
   });
 
   mpfSelect?.addEventListener('change', () => {
@@ -168,24 +146,6 @@
     }
     expectedQtySelect.innerHTML += options.join('');
     mpfHelp.textContent = `Qty produced per sheet: ${step}. Choose desired multiple.`;
-  });
-
-  document.querySelectorAll('.queue-chip-row').forEach((container) => {
-    let dragChip = null;
-    container.querySelectorAll('.queue-chip').forEach((chip) => {
-      chip.addEventListener('dragstart', () => { dragChip = chip; });
-      chip.addEventListener('dragover', (event) => event.preventDefault());
-      chip.addEventListener('drop', async () => {
-        if (!dragChip || dragChip === chip) return;
-        container.insertBefore(dragChip, chip);
-        const order = [...container.querySelectorAll('.queue-chip')].map((node) => Number(node.dataset.queueId));
-        await fetch(`/stations/${container.dataset.stationId}/queue-reorder`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({order})
-        });
-      });
-    });
   });
 })();
 </script>

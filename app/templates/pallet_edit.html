@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-toolbar">
+  <h2>Edit Pallet {{pallet.pallet_code}}</h2>
+  <a class="action-btn secondary" href="/production/pallet/{{pallet.id}}">Back to Pallet</a>
+</div>
+
+<table>
+  <tr>
+    <th>Expected Qty</th>
+    <th>Component ID</th>
+    <th>Qty Scrap</th>
+    {% for station_name in station_names %}
+    <th>{{station_name}}</th>
+    {% endfor %}
+  </tr>
+  {% for row in part_rows %}
+  <tr>
+    <td>{{row.expected_qty}}</td>
+    <td>{{row.component_id or '-'}}</td>
+    <td>{{row.scrap_qty}}</td>
+    {% for station_name in station_names %}
+    <td>{% if row.station_flags[station_name] %}✓{% else %}-{% endif %}</td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

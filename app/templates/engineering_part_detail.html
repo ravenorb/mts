@@ -30,6 +30,34 @@
 </form>
 
 <div class="bom-block">
+  <h4>Station Routing</h4>
+  <form method="post" action="/engineering/parts/{{ part.part_id }}/station-routing" id="station-routing-form" class="panel-form">
+    <input type="hidden" name="station_ids" id="station-ids-input" />
+    <div class="field-help">Drag stations into the route order for this part. Unassigned stations stay in the available list.</div>
+    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+      <div>
+        <strong>Assigned Route</strong>
+        <div id="assigned-stations" class="queue-chip-row" style="min-width:260px; min-height:42px; border:1px dashed #bbb; padding:8px;">
+          {% for station in stations if station.id in assigned_station_ids %}
+          <div class="queue-chip" draggable="true" data-station-id="{{station.id}}">{{station.station_name}}</div>
+          {% endfor %}
+        </div>
+      </div>
+      <div>
+        <strong>Available Stations</strong>
+        <div id="available-stations" class="queue-chip-row" style="min-width:260px; min-height:42px; border:1px dashed #bbb; padding:8px;">
+          {% for station in stations if station.id not in assigned_station_ids %}
+          <div class="queue-chip" draggable="true" data-station-id="{{station.id}}">{{station.station_name}}</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% if mode == 'edit' %}<button type="submit">Save Route</button>{% endif %}
+  </form>
+</div>
+
+
+<div class="bom-block">
   <div class="bom-controls">
     <form method="get" action="/engineering/parts/{{ part.part_id }}">
       <input type="hidden" name="mode" value="{{ mode }}" />
@@ -131,4 +159,34 @@
 
   {% if mode == 'edit' %}<button type="submit">Save</button>{% endif %}
 </form>
+
+<script>
+(() => {
+  const form = document.getElementById('station-routing-form');
+  if (!form) return;
+  const assigned = document.getElementById('assigned-stations');
+  const available = document.getElementById('available-stations');
+  const hidden = document.getElementById('station-ids-input');
+
+  let dragging = null;
+  document.querySelectorAll('#assigned-stations .queue-chip, #available-stations .queue-chip').forEach((chip) => {
+    chip.addEventListener('dragstart', () => { dragging = chip; });
+  });
+
+  [assigned, available].forEach((container) => {
+    container.addEventListener('dragover', (event) => event.preventDefault());
+    container.addEventListener('drop', (event) => {
+      event.preventDefault();
+      if (!dragging) return;
+      container.appendChild(dragging);
+    });
+  });
+
+  form.addEventListener('submit', () => {
+    const orderedIds = [...assigned.querySelectorAll('.queue-chip')].map((chip) => chip.dataset.stationId);
+    hidden.value = orderedIds.join(',');
+  });
+})();
+</script>
+
 {% endblock %}
