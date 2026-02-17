@@ -3041,11 +3041,7 @@ def storage_location_list(request: Request, db: Session = Depends(get_db), user=
                 func.count(models.StorageBin.id),
             )
             .filter(
-                or_(
-                    models.StorageBin.qty > 0,
-                    func.trim(func.coalesce(models.StorageBin.location_id, "")) != "",
-                    func.trim(func.coalesce(models.StorageBin.component_id, "")) != "",
-                )
+                func.trim(func.coalesce(models.StorageBin.component_id, "")) != ""
             )
             .group_by(models.StorageBin.storage_location_id)
             .all()
