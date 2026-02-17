@@ -37,7 +37,7 @@
 <h3>{{selected_station.station_name}} Queue</h3>
 <table>
   <tr>
-    <th>Queue Pos</th><th>Pallet</th><th>Status</th><th>Frame Part</th><th>Expected Qty</th><th>Actions</th>
+    <th>Queue Pos</th><th>Pallet</th><th>Status</th><th>Frame Part</th><th>Expected Qty</th><th>Components</th><th>Actions</th>
   </tr>
   {% for row in station_queue %}
   <tr>
@@ -46,6 +46,15 @@
     <td>{{row.pallet.status if row.pallet else '-'}}</td>
     <td>{{row.pallet.frame_part_number if row.pallet else '-'}}</td>
     <td>{{row.pallet.expected_quantity if row.pallet else '-'}}</td>
+    <td>
+      {% if row.pallet and row.pallet_components %}
+        {% for component in row.pallet_components %}
+          <div>{{component.component_id or '-'}}: {{component.expected_quantity}}</div>
+        {% endfor %}
+      {% else %}
+        -
+      {% endif %}
+    </td>
     <td>
       {% if row.pallet %}
       <a class="small-link-btn" href="/production/pallet/{{row.pallet.id}}">Open</a>
@@ -57,38 +66,7 @@
 </table>
 {% endif %}
 
-<h3>Debug: Full Queue</h3>
-<table>
-  <tr>
-    <th>Station ID</th><th>Pallet ID</th><th>Queue Pos</th><th>Entered At</th>
-  </tr>
-  {% for queue_row in all_queue_rows %}
-  <tr>
-    <td>{{queue_row.station_id}}</td>
-    <td>{{queue_row.pallet_id}}</td>
-    <td>{{queue_row.queue_position}}</td>
-    <td>{{queue_row.entered_at}}</td>
-  </tr>
-  {% endfor %}
-</table>
 
-<h3>Debug: Full Pallet List</h3>
-<table>
-  <tr>
-    <th>ID</th><th>Pallet</th><th>Status</th><th>Frame Part</th><th>Expected Qty</th><th>Current Station</th><th>Created</th>
-  </tr>
-  {% for pallet in active_pallets %}
-  <tr>
-    <td>{{pallet.id}}</td>
-    <td>{{pallet.pallet_code}}</td>
-    <td>{{pallet.status}}</td>
-    <td>{{pallet.frame_part_number or '-'}}</td>
-    <td>{{pallet.expected_quantity or '-'}}</td>
-    <td>{{pallet.current_station_id or '-'}}</td>
-    <td>{{pallet.created_at}}</td>
-  </tr>
-  {% endfor %}
-</table>
 
 <dialog id="create-order-modal" class="modal-dialog">
   <form method="post" action="/production/create-order" class="panel-form" id="create-order-form">
