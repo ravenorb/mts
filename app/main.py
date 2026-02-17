@@ -451,6 +451,47 @@ def ensure_default_stations(db: Session) -> list[models.Station]:
     return db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
 
 
+def get_part_station_routes(db: Session, part_number: str) -> list[models.Station]:
+    if not part_number:
+        return []
+    stations = db.query(models.Station).join(
+        models.PartStationRoute,
+        models.PartStationRoute.station_id == models.Station.id,
+    ).filter(
+        models.PartStationRoute.part_id == part_number,
+        models.Station.active.is_(True),
+    ).order_by(models.PartStationRoute.route_order.asc(), models.PartStationRoute.id.asc()).all()
+    return stations
+
+
+def ensure_current_part_revision(db: Session, part_number: str, username: str) -> models.PartRevision:
+    part = db.query(models.Part).filter_by(part_number=part_number).first()
+    if not part:
+        part_master = db.query(models.PartMaster).filter_by(part_id=part_number).first()
+        part = models.Part(part_number=part_number, description=part_master.description if part_master else "", active=True)
+        db.add(part)
+        db.flush()
+
+    revision = db.query(models.PartRevision).filter_by(part_id=part.id, is_current=True).first()
+    if revision:
+        return revision
+
+    revision = db.query(models.PartRevision).filter_by(part_id=part.id).order_by(models.PartRevision.id.desc()).first()
+    if revision:
+        return revision
+
+    revision = models.PartRevision(
+        part_id=part.id,
+        revision_code="R0",
+        is_current=True,
+        released_by=username,
+        change_notes="Auto-created revision",
+    )
+    db.add(revision)
+    db.flush()
+    return revision
+
+
 def station_nav_context(db: Session) -> dict:
     stations = ensure_default_stations(db)
     return {"stations_nav": [{"id": s.id, "name": s.station_name} for s in stations]}
@@ -559,16 +600,32 @@ def build_station_queue_cards(db: Session, stations: list[models.Station]) -> li
 
 
 @app.get("/production", response_class=HTMLResponse)
-def production(request: Request, q: str = "", db: Session = Depends(get_db), user=Depends(require_login)):
+def production(request: Request, q: str = "", tab: str = "active", db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = None
     if q:
         pallet_query = db.query(models.Pallet).filter(models.Pallet.pallet_code == q)
         if q.isdigit():
             pallet_query = db.query(models.Pallet).filter((models.Pallet.pallet_code == q) | (models.Pallet.id == int(q)))
         pallet = pallet_query.first()
-    next_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).limit(12).all()
+
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     part_revisions = db.query(models.PartRevision).order_by(models.PartRevision.id.desc()).limit(200).all()
+    active_pallets = db.query(models.Pallet).filter(models.Pallet.status.in_(["staged", "in_progress", "hold"])).order_by(models.Pallet.created_at.desc()).all()
+
+    selected_station = None
+    station_queue = []
+    if tab.startswith("station-"):
+        station_id = tab.split("station-", 1)[1]
+        if station_id.isdigit():
+            selected_station = next((station for station in stations if station.id == int(station_id)), None)
+    if selected_station:
+        queue_rows = db.query(models.Queue).filter_by(station_id=selected_station.id).order_by(models.Queue.queue_position.asc()).all()
+        for row in queue_rows:
+            station_queue.append({
+                "queue": row,
+                "pallet": db.query(models.Pallet).filter_by(id=row.pallet_id).first(),
+            })
+
     frame_parts_from_mpf = {
         row[0]
         for row in db.query(models.MpfMaster.part_id)
@@ -591,7 +648,7 @@ def production(request: Request, q: str = "", db: Session = Depends(get_db), use
         .all()
     }
     frame_parts = sorted(frame_parts_from_mpf | frame_parts_from_parts | frame_parts_from_part_master)
-    station_queue_cards = build_station_queue_cards(db, stations)
+
     return templates.TemplateResponse("production.html", {
         "request": request,
         "user": user,
@@ -599,12 +656,14 @@ def production(request: Request, q: str = "", db: Session = Depends(get_db), use
         "entity_groups": ENTITY_GROUPS,
         "query": q,
         "found": pallet,
-        "next_pallets": next_pallets,
+        "active_pallets": active_pallets,
         "stations": stations,
         "part_revisions": part_revisions,
         "frame_parts": frame_parts,
-        "station_queue_cards": station_queue_cards,
         "errors": {},
+        "tab": tab,
+        "selected_station": selected_station,
+        "station_queue": station_queue,
     })
 
 
@@ -634,6 +693,44 @@ def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db
     events = db.query(models.PalletEvent).filter_by(pallet_id=pallet_id).order_by(models.PalletEvent.recorded_at.asc()).all()
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "parts": parts, "events": events, "stations": stations, "errors": {}})
+
+
+@app.get("/production/pallet/{pallet_id}/edit", response_class=HTMLResponse)
+def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
+    if not pallet:
+        raise HTTPException(404)
+
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    station_names = [station.station_name for station in stations]
+
+    part_rows = []
+    pallet_parts = db.query(models.PalletPart).filter_by(pallet_id=pallet_id).order_by(models.PalletPart.id.asc()).all()
+    for pallet_part in pallet_parts:
+        revision = db.query(models.PartRevision).filter_by(id=pallet_part.part_revision_id).first()
+        component_id = ""
+        if revision:
+            part_row = db.query(models.Part).filter_by(id=revision.part_id).first()
+            component_id = part_row.part_number if part_row else ""
+
+        assigned_stations = {station.station_name for station in get_part_station_routes(db, component_id)}
+        station_flags = {station_name: (station_name in assigned_stations) for station_name in station_names}
+        part_rows.append({
+            "expected_qty": pallet_part.planned_quantity,
+            "component_id": component_id,
+            "scrap_qty": pallet_part.scrap_quantity,
+            "station_flags": station_flags,
+        })
+
+    return templates.TemplateResponse("pallet_edit.html", {
+        "request": request,
+        "user": user,
+        "top_nav": TOP_NAV,
+        "entity_groups": ENTITY_GROUPS,
+        "pallet": pallet,
+        "part_rows": part_rows,
+        "station_names": station_names,
+    })
 
 
 @app.post("/production/pallet/{pallet_id}/move")
@@ -686,39 +783,9 @@ def production_create_order(
         raise HTTPException(422, "Expected quantity must be a multiple of qty produced")
     sheet_count = float(round(sheet_count))
 
-    part = db.query(models.Part).filter_by(part_number=frame_part_id).first()
-    if not part:
-        engineering_part = db.query(models.PartMaster).filter_by(part_id=frame_part_id).first()
-        if engineering_part:
-            part = models.Part(part_number=engineering_part.part_id, description=engineering_part.description or "", active=True)
-            db.add(part)
-            db.flush()
-
-            auto_revision = models.PartRevision(
-                part_id=part.id,
-                revision_code=f"R{max(engineering_part.cur_rev, 0)}",
-                is_current=True,
-                released_by=user.username,
-                change_notes="Auto-created from engineering part_master during order creation",
-            )
-            db.add(auto_revision)
-            db.flush()
-        else:
-            raise HTTPException(422, f"Part {frame_part_id} is not defined in parts or engineering part tables")
-
-    revision = db.query(models.PartRevision).filter_by(part_id=part.id, is_current=True).first()
-    if not revision:
-        revision = db.query(models.PartRevision).filter_by(part_id=part.id).order_by(models.PartRevision.id.desc()).first()
-    if not revision:
-        revision = models.PartRevision(
-            part_id=part.id,
-            revision_code="R0",
-            is_current=True,
-            released_by=user.username,
-            change_notes="Auto-created default revision during order creation",
-        )
-        db.add(revision)
-        db.flush()
+    if not db.query(models.Part).filter_by(part_number=frame_part_id).first() and not db.query(models.PartMaster).filter_by(part_id=frame_part_id).first():
+        raise HTTPException(422, f"Part {frame_part_id} is not defined in parts or engineering part tables")
+    revision = ensure_current_part_revision(db, frame_part_id, user.username)
 
     parsed_sheet = parse_sheet_size(mpf.sheet_size)
     material_row = None
@@ -741,7 +808,8 @@ def production_create_order(
     db.refresh(order)
 
     pallet_code = f"P-{int(datetime.utcnow().timestamp())}-{order.id}"
-    first_station = db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).first()
+    route_stations = get_part_station_routes(db, frame_part_id)
+    first_station = route_stations[0] if route_stations else db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).first()
     pallet = models.Pallet(
         pallet_code=pallet_code,
         pallet_type="manual",
@@ -760,20 +828,35 @@ def production_create_order(
 
     details = db.query(models.MpfDetail).filter_by(mpf_master_id=mpf.id).order_by(models.MpfDetail.id.asc()).all()
     component_snapshot = []
+    all_part_revisions = [
+        {
+            "part_revision_id": revision.id,
+            "planned_quantity": expected_quantity,
+        }
+    ]
     for detail in details:
+        component_id = (detail.component_id or "").strip()
+        expected_component_qty = detail.sheet_qty * sheet_count
         component_snapshot.append({
-            "component_id": detail.component_id,
+            "component_id": component_id,
             "qty_per_sheet": detail.sheet_qty,
-            "expected_quantity": detail.sheet_qty * sheet_count,
+            "expected_quantity": expected_component_qty,
         })
+        if component_id:
+            component_revision = ensure_current_part_revision(db, component_id, user.username)
+            all_part_revisions.append({
+                "part_revision_id": component_revision.id,
+                "planned_quantity": expected_component_qty,
+            })
 
-    db.add(models.PalletPart(
-        pallet_id=pallet.id,
-        part_revision_id=revision.id,
-        planned_quantity=expected_quantity,
-        actual_quantity=0,
-        scrap_quantity=0,
-    ))
+    for part_item in all_part_revisions:
+        db.add(models.PalletPart(
+            pallet_id=pallet.id,
+            part_revision_id=part_item["part_revision_id"],
+            planned_quantity=part_item["planned_quantity"],
+            actual_quantity=0,
+            scrap_quantity=0,
+        ))
     db.add(models.PalletRevision(
         pallet_id=pallet.id,
         revision_code="R1",
@@ -794,11 +877,21 @@ def production_create_order(
         notes=f"Order created from HK MPF {mpf.mpf_filename}",
     ))
 
-    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).all()
-    for station in stations:
-        max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station.id).scalar() or 0
+    route_station_ids: list[int] = []
+    seen_station_ids: set[int] = set()
+    for route_station in route_stations:
+        if route_station.id in seen_station_ids:
+            continue
+        route_station_ids.append(route_station.id)
+        seen_station_ids.add(route_station.id)
+
+    if not route_station_ids:
+        route_station_ids = [station.id for station in db.query(models.Station).filter_by(active=True).order_by(models.Station.id.asc()).all()]
+
+    for station_id in route_station_ids:
+        max_position = db.query(func.max(models.Queue.queue_position)).filter_by(station_id=station_id).scalar() or 0
         db.add(models.Queue(
-            station_id=station.id,
+            station_id=station_id,
             pallet_id=pallet.id,
             queue_position=int(max_position) + 1,
             status="queued",
@@ -873,6 +966,10 @@ def engineering_part_detail(part_id: str, request: Request, mode: str = "edit", 
     revision_header = db.query(models.RevisionHeader).filter_by(part_id=part_id, rev_id=selected_rev).first()
     revision_list = db.query(models.RevisionHeader.rev_id).filter_by(part_id=part_id).order_by(models.RevisionHeader.rev_id.desc()).all()
 
+    stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
+    assigned_routes = db.query(models.PartStationRoute).filter_by(part_id=part_id).order_by(models.PartStationRoute.route_order.asc(), models.PartStationRoute.id.asc()).all()
+    assigned_station_ids = [route.station_id for route in assigned_routes]
+
     revision_file_buttons: list[dict[str, str]] = []
     if revision_header:
         dwg_payload: dict[str, str] = {}
@@ -919,8 +1016,35 @@ def engineering_part_detail(part_id: str, request: Request, mode: str = "edit", 
         "mode": mode,
         "revision_list": [item[0] for item in revision_list],
         "revision_file_buttons": revision_file_buttons,
+        "stations": stations,
+        "assigned_station_ids": assigned_station_ids,
         **engineering_nav_context(),
     })
+
+
+@app.post("/engineering/parts/{part_id}/station-routing")
+async def engineering_part_station_routing(part_id: str, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    part = db.query(models.PartMaster).filter_by(part_id=part_id).first()
+    if not part:
+        raise HTTPException(404)
+
+    form = await request.form()
+    station_ids_payload = (form.get("station_ids") or "").strip()
+    station_ids: list[int] = []
+    for value in station_ids_payload.split(","):
+        cleaned = value.strip()
+        if cleaned.isdigit():
+            station_ids.append(int(cleaned))
+
+    db.query(models.PartStationRoute).filter_by(part_id=part_id).delete(synchronize_session=False)
+    for index, station_id in enumerate(station_ids, start=1):
+        station = db.query(models.Station).filter_by(id=station_id, active=True).first()
+        if not station:
+            continue
+        db.add(models.PartStationRoute(part_id=part_id, station_id=station_id, route_order=index))
+
+    db.commit()
+    return RedirectResponse(f"/engineering/parts/{part_id}?mode=edit", status_code=302)
 
 
 @app.get("/engineering/parts/{part_id}/revisions/{rev_id}/files/{file_key}")

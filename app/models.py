@@ -63,6 +63,16 @@ class PartMaster(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class PartStationRoute(Base):
+    __tablename__ = "part_station_routes"
+    __table_args__ = (UniqueConstraint("part_id", "station_id", name="uq_part_station_route"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    part_id: Mapped[str] = mapped_column(ForeignKey("part_master.part_id"))
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    route_order: Mapped[int] = mapped_column(Integer, default=1)
+
+
 class RevisionBom(Base):
     __tablename__ = "revision_bom"
     id: Mapped[int] = mapped_column(primary_key=True)
