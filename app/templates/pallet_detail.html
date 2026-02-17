@@ -10,20 +10,34 @@
 <h3>Parts on Pallet</h3>
 <table>
   <tr>
+    <th>Component ID</th>
     <th>Qty Needed</th>
     <th>Expected Qty</th>
-    <th>Qty Scrap</th>
     <th>Current Qty</th>
-    <th>Component ID</th>
+    <th>Qty Scrap</th>
+    <th>Station ID</th>
+    <th>Qty Completed</th>
+    <th>Qty Scrap</th>
+    <th>Status</th>
   </tr>
   {% for row in part_rows %}
   <tr>
+    <td>{{row.component_id or '-'}}</td>
     <td>{{row.qty_needed or 0}}</td>
     <td>{{row.expected_qty or 0}}</td>
-    <td>{{row.scrap_qty or 0}}</td>
     <td>{{row.current_qty or 0}}</td>
-    <td>{{row.component_id or '-'}}</td>
+    <td>{{row.scrap_qty or 0}}</td>
+    <td colspan="4">-</td>
   </tr>
+    {% for log in component_station_rollup.get(row.component_id, []) %}
+    <tr>
+      <td colspan="5"></td>
+      <td>{{log.station_id}}</td>
+      <td>{{log.qty_completed}}</td>
+      <td>{{log.qty_scrap}}</td>
+      <td>recorded</td>
+    </tr>
+    {% endfor %}
   {% endfor %}
 </table>
 

@@ -5,6 +5,7 @@
 <div class="action-row">
   {% if active_pallet %}
   <form method="post" action="/stations/{{station.id}}/save-work"><button type="submit">Save Pallet Work</button></form>
+  <a class="action-btn" href="/stations/{{station.id}}/complete">Complete Pallet</a>
   {% else %}
   <form method="post" action="/stations/{{station.id}}/start-next"><button type="submit">Start Next Pallet</button></form>
   {% endif %}

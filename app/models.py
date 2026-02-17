@@ -334,6 +334,20 @@ class PalletStationRoute(Base):
     location_id: Mapped[str] = mapped_column(String(20), default="00")
 
 
+class PalletComponentStationLog(Base):
+    __tablename__ = "pallet_component_station_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pallet_id: Mapped[int] = mapped_column(ForeignKey("pallets.id"))
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    component_id: Mapped[str] = mapped_column(String(80), default="")
+    qty_expected: Mapped[float] = mapped_column(Float, default=0)
+    qty_completed: Mapped[float] = mapped_column(Float, default=0)
+    qty_scrap: Mapped[float] = mapped_column(Float, default=0)
+    recorded_by: Mapped[str] = mapped_column(String(80), default="system")
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class StationMaintenanceTask(Base):
     __tablename__ = "station_maintenance_tasks"
     id: Mapped[int] = mapped_column(primary_key=True)
