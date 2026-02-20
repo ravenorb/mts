@@ -4161,17 +4161,22 @@ def compute_skeleton(model: dict) -> dict:
         LineString([(x, 0), (x, height)]) for x in (width / 3.0, width * 2.0 / 3.0)
     ]
     cut_lines = []
+    debug_lines = []
     for line in candidates:
+        coords = list(line.coords)
+        debug_lines.append({"a": [coords[0][0], coords[0][1]], "b": [coords[-1][0], coords[-1][1]]})
         clipped = line.intersection(skeleton)
         if clipped.is_empty:
             continue
-        clipped = clipped.difference(parts_union).buffer(0)
+        clipped = clipped.difference(parts_union)
         if clipped.is_empty:
             continue
         if clipped.geom_type == "LineString":
             cut_lines.append(clipped)
         elif clipped.geom_type == "MultiLineString":
             cut_lines.extend([geom for geom in clipped.geoms if geom.length > 1e-4])
+        elif clipped.geom_type == "GeometryCollection":
+            cut_lines.extend([geom for geom in clipped.geoms if geom.geom_type == "LineString" and geom.length > 1e-4])
 
     if not cut_lines and not skeleton.is_empty:
         components = list(skeleton.geoms) if skeleton.geom_type == "MultiPolygon" else [skeleton]
@@ -4203,6 +4208,11 @@ def compute_skeleton(model: dict) -> dict:
     for idx, line in enumerate(cut_lines, start=1):
         coords = list(line.coords)
         skeleton_cuts.append({"id": idx, "a": [coords[0][0], coords[0][1]], "b": [coords[-1][0], coords[-1][1]]})
+    if not skeleton_cuts:
+        for idx, line in enumerate(candidates, start=1):
+            coords = list(line.coords)
+            skeleton_cuts.append({"id": idx, "a": [coords[0][0], coords[0][1]], "b": [coords[-1][0], coords[-1][1]]})
+    model2["skeletonDebugLines"] = debug_lines
     model2["skeletonCuts"] = skeleton_cuts
     return model2
 

@@ -101,7 +101,7 @@ function sortPartsTopToBottom(){
   drawParts.sort((a,b)=>{
     const ay = a.bounds ? (a.bounds.maxY + a.bounds.minY)/2 : -Infinity;
     const by = b.bounds ? (b.bounds.maxY + b.bounds.minY)/2 : -Infinity;
-    return by - ay;
+    return ay - by;
   });
   drawParts.forEach((row, i)=>{ row.displayIndex = i + 1; });
   partOrder = drawParts.map((row) => row.idx);
@@ -260,6 +260,19 @@ function draw(){
     ctx.font = "bold 14px Arial";
     ctx.fillText(`Part ${row.displayIndex}`, center[0] + 6, center[1] - 6);
   });
+
+  if(model.skeletonDebugLines){
+    ctx.strokeStyle = "rgba(255,0,0,0.45)";
+    ctx.lineWidth = 1;
+    model.skeletonDebugLines.forEach((line) => {
+      const a = worldToCanvas(line.a);
+      const b = worldToCanvas(line.b);
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.stroke();
+    });
+  }
 
   if(model.skeletonCuts){
     ctx.strokeStyle="#ff3333"; ctx.lineWidth=3;
