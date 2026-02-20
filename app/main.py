@@ -3727,12 +3727,15 @@ def parse_hk_mpf(text: str) -> dict:
     sheet = {"width": None, "height": None}
     parts = []
     current_part = None
-    current_contour = None
+    current_contours = []
+    part_starts: dict[int, list[dict]] = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
         u = line.upper()
+        n_match = re.match(r"N(\d+)", u)
+        line_no = int(n_match.group(1)) if n_match else None
         if u.startswith("HKINI"):
             vals = _extract_call_floats(u, "HKINI")
             if len(vals) >= 3:
@@ -3741,40 +3744,58 @@ def parse_hk_mpf(text: str) -> dict:
             continue
         if "HKOST(" in u:
             vals = _extract_call_floats(u, "HKOST")
-            current_part = {"program_id": int(vals[3]) if len(vals) >= 4 else None, "tech": int(vals[4]) if len(vals) >= 5 else None, "contours": []}
+            start_line = int(vals[3]) if len(vals) >= 4 else None
+            current_part = {
+                "program_id": start_line,
+                "tech": int(vals[4]) if len(vals) >= 5 else None,
+                "offset": [vals[0] if len(vals) >= 1 else 0.0, vals[1] if len(vals) >= 2 else 0.0],
+                "contours": [],
+            }
             parts.append(current_part)
+            if start_line is not None:
+                part_starts.setdefault(start_line, []).append(current_part)
             continue
         if "HKSTR(" in u:
             vals = _extract_call_floats(u, "HKSTR")
-            # HKSTR args 3/4/5 are contour start offsets on the sheet (X/Y/Z).
-            # Use X/Y as the active tool position so subsequent moves render
-            # relative to the contour's actual sheet start.
+            # HKSTR args 3/4/5 are contour-local start coordinates (X/Y/Z).
+            # HKOST provides sheet-level placement offsets keyed by HKSTR line.
             x = vals[2] if len(vals) >= 3 else x
             y = vals[3] if len(vals) >= 4 else y
-            current_contour = {"type": "outer" if (int(vals[0]) if vals else 0) == 0 else "hole", "hkstr": vals, "segments": []}
-            if current_part is None:
-                current_part = {"program_id": None, "tech": None, "contours": []}
-                parts.append(current_part)
-            current_part["contours"].append(current_contour)
+            placements = part_starts.get(line_no or -1)
+            if not placements:
+                if current_part is None:
+                    current_part = {"program_id": None, "tech": None, "offset": [0.0, 0.0], "contours": []}
+                    parts.append(current_part)
+                placements = [current_part]
+
+            current_contours = []
+            ctype = "outer" if (int(vals[0]) if vals else 0) == 0 else "hole"
+            for placed_part in placements:
+                contour = {"type": ctype, "hkstr": vals, "segments": []}
+                placed_part["contours"].append(contour)
+                ox, oy = placed_part.get("offset", [0.0, 0.0])
+                current_contours.append({"contour": contour, "offset": [ox, oy]})
             continue
         if "HKCUT" in u:
             cut_on = True
             continue
         if "HKSTO" in u:
             cut_on = False
-            current_contour = None
+            current_contours = []
             continue
         if "HKPED" in u:
             current_part = None
-            current_contour = None
+            current_contours = []
             cut_on = False
             continue
-        if u.startswith("WHEN") or not cut_on or current_contour is None:
+        if u.startswith("WHEN") or not cut_on or not current_contours:
             continue
         if u.startswith("G1"):
             nx = float(RE_X.search(u).group(1)) if RE_X.search(u) else x
             ny = float(RE_Y.search(u).group(1)) if RE_Y.search(u) else y
-            current_contour["segments"].append({"kind": "line", "a": [x, y], "b": [nx, ny]})
+            for active in current_contours:
+                ox, oy = active["offset"]
+                active["contour"]["segments"].append({"kind": "line", "a": [x + ox, y + oy], "b": [nx + ox, ny + oy]})
             x, y = nx, ny
             continue
         if u.startswith("G2") or u.startswith("G3"):
@@ -3782,10 +3803,19 @@ def parse_hk_mpf(text: str) -> dict:
             if not (mx and my and mi and mj):
                 continue
             nx, ny = float(mx.group(1)), float(my.group(1))
-            current_contour["segments"].append({"kind": "polyline", "points": _arc_points((x, y), (nx, ny), float(mi.group(1)), float(mj.group(1)), cw=u.startswith("G2"))})
+            for active in current_contours:
+                ox, oy = active["offset"]
+                active["contour"]["segments"].append(
+                    {
+                        "kind": "polyline",
+                        "points": _arc_points((x + ox, y + oy), (nx + ox, ny + oy), float(mi.group(1)), float(mj.group(1)), cw=u.startswith("G2")),
+                    }
+                )
             x, y = nx, ny
     sheet["width"] = float(sheet["width"] or 0.0)
     sheet["height"] = float(sheet["height"] or 0.0)
+    for part in parts:
+        part.pop("offset", None)
     contour_id = 1
     for part in parts:
         for contour in part["contours"]:
