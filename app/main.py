@@ -3964,7 +3964,7 @@ def parse_hk_mpf(text: str) -> dict:
     sheet = {"width": None, "height": None}
     parts = []
     current_part = None
-    active_parts = []
+    active_parts: list[dict] = []
     current_contours = []
     part_starts: dict[int, list[dict]] = {}
     hkstr_block_id = 0
@@ -3986,14 +3986,14 @@ def parse_hk_mpf(text: str) -> dict:
             start_line = int(vals[3]) if len(vals) >= 4 else None
             contour_count = int(vals[4]) if len(vals) >= 5 else None
             current_part = {
-                "program_id": start_line,
+                "program_id": line_no,
+                "first_contour_id": start_line,
                 "contour_count": contour_count,
                 "offset": [vals[0] if len(vals) >= 1 else 0.0, vals[1] if len(vals) >= 2 else 0.0],
                 "frames": [],
                 "contours": [],
             }
             parts.append(current_part)
-            active_parts = [current_part]
             if start_line is not None:
                 part_starts.setdefault(start_line, []).append(current_part)
             continue
@@ -4006,15 +4006,18 @@ def parse_hk_mpf(text: str) -> dict:
             y = vals[3] if len(vals) >= 4 else y
             placements = part_starts.get(line_no or -1)
             if placements:
-                active_parts = placements
-            elif active_parts:
-                placements = active_parts
+                active_parts = []
+                for placed in placements:
+                    count = placed.get("contour_count")
+                    remaining = int(count) if isinstance(count, int) and count > 0 else None
+                    active_parts.append({"part": placed, "remaining": remaining})
+            if active_parts:
+                placements = [row["part"] for row in active_parts]
             else:
                 if current_part is None:
-                    current_part = {"program_id": None, "contour_count": None, "offset": [0.0, 0.0], "frames": [], "contours": []}
+                    current_part = {"program_id": None, "first_contour_id": None, "contour_count": None, "offset": [0.0, 0.0], "frames": [], "contours": []}
                     parts.append(current_part)
                 placements = [current_part]
-                active_parts = placements
 
             current_contours = []
             ctype = "outer" if (int(vals[0]) if vals else 0) == 0 else "hole"
@@ -4030,6 +4033,18 @@ def parse_hk_mpf(text: str) -> dict:
                 if not placed_part.get("frames"):
                     placed_part.setdefault("frames", []).append({**frame, "origin": [ox, oy]})
                 current_contours.append({"contour": contour, "offset": [ox, oy]})
+            if active_parts:
+                next_active = []
+                for row in active_parts:
+                    remaining = row["remaining"]
+                    if remaining is None:
+                        next_active.append(row)
+                        continue
+                    remaining -= 1
+                    if remaining > 0:
+                        row["remaining"] = remaining
+                        next_active.append(row)
+                active_parts = next_active
             continue
         if "HKCUT" in u:
             cut_on = True
@@ -4113,7 +4128,7 @@ def compute_skeleton(model: dict) -> dict:
     def parts_to_polygons() -> list:
         out = []
         for part in model["parts"]:
-            outers, holes = [], []
+            rings = []
             for contour in part["contours"]:
                 ring = _contour_to_ring(contour)
                 if not ring:
@@ -4121,14 +4136,16 @@ def compute_skeleton(model: dict) -> dict:
                 poly = Polygon(ring).buffer(0)
                 if poly.is_empty:
                     continue
-                (outers if contour["type"] == "outer" else holes).append(poly)
-            if not outers:
+                rings.append(poly)
+            if not rings:
                 continue
-            outer_union = unary_union(outers).buffer(0)
-            hole_union = unary_union([hole for hole in holes if hole.within(outer_union)]).buffer(0) if holes else None
-            part_poly = outer_union.difference(hole_union).buffer(0) if hole_union else outer_union
-            if not part_poly.is_empty:
-                out.append(part_poly)
+            geom = Polygon()
+            for poly in sorted(rings, key=lambda p: p.area, reverse=True):
+                depth = sum(1 for other in rings if other is not poly and other.area > poly.area and other.contains(poly.representative_point()))
+                geom = geom.union(poly) if depth % 2 == 0 else geom.difference(poly)
+            geom = geom.buffer(0)
+            if not geom.is_empty:
+                out.append(geom)
         return out
 
     width = model["sheet"]["width"]
@@ -4155,6 +4172,31 @@ def compute_skeleton(model: dict) -> dict:
             cut_lines.append(clipped)
         elif clipped.geom_type == "MultiLineString":
             cut_lines.extend([geom for geom in clipped.geoms if geom.length > 1e-4])
+
+    if not cut_lines and not skeleton.is_empty:
+        components = list(skeleton.geoms) if skeleton.geom_type == "MultiPolygon" else [skeleton]
+        for comp in components:
+            center = comp.representative_point()
+            test_lines = [
+                LineString([(0, center.y), (width, center.y)]),
+                LineString([(center.x, 0), (center.x, height)]),
+            ]
+            best = None
+            for line in test_lines:
+                clipped = line.intersection(comp)
+                if clipped.is_empty:
+                    continue
+                if clipped.geom_type == "LineString":
+                    segments = [clipped]
+                elif clipped.geom_type == "MultiLineString":
+                    segments = [seg for seg in clipped.geoms if seg.length > 1e-4]
+                else:
+                    segments = []
+                for seg in segments:
+                    if best is None or seg.length > best.length:
+                        best = seg
+            if best is not None:
+                cut_lines.append(best)
 
     model2 = dict(model)
     skeleton_cuts = []
