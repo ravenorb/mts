@@ -3,7 +3,9 @@ import math
 import os
 import re
 import subprocess
+import csv
 from datetime import datetime, timedelta
+from io import StringIO
 from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -558,6 +560,13 @@ def ensure_storage_bin_schema(db: Session):
     db.commit()
 
 
+def ensure_storage_location_schema(db: Session):
+    location_columns = {row[1] for row in db.execute(text("PRAGMA table_info(storage_locations)"))}
+    if "location_code" not in location_columns:
+        db.execute(text("ALTER TABLE storage_locations ADD COLUMN location_code VARCHAR(80) DEFAULT ''"))
+    db.commit()
+
+
 def ensure_default_stations(db: Session) -> list[models.Station]:
     stations = db.query(models.Station).filter_by(active=True).order_by(models.Station.station_name.asc()).all()
     if stations:
@@ -948,6 +957,7 @@ def startup():
     ensure_pallet_component_station_log_schema(db)
     ensure_pallet_bom_schema(db)
     ensure_pallet_exception_schema(db)
+    ensure_storage_location_schema(db)
     ensure_storage_bin_schema(db)
     ensure_employee_auth_schema(db)
     migrate_users_to_employees(db)
@@ -3154,12 +3164,25 @@ def maintenance_save(request_id: int, work_comments: str = Form(""), status: str
 
 
 
+def build_storage_holder_id(location: models.StorageLocation, shelf_id: int, bin_id: int) -> str:
+    code = (location.location_code or "").strip()
+    if code:
+        return f"{code}{bin_id}" if location.shelf_count <= 1 else f"{code}{shelf_id}.{bin_id}"
+    return f"{location.id}.{bin_id}" if location.shelf_count <= 1 else f"{location.id}.{shelf_id}.{bin_id}"
+
+
 def ensure_storage_bins(db: Session, location: models.StorageLocation):
+    shelf_count = max(int(location.shelf_count or 0), 1)
+    bin_count = max(int(location.bin_count or 0), 1)
+    location.shelf_count = shelf_count
+    location.bin_count = bin_count
+
     existing = {(b.shelf_id, b.bin_id) for b in db.query(models.StorageBin).filter_by(storage_location_id=location.id).all()}
-    for shelf_id in range(1, max(location.shelf_count, 0) + 1):
-        for bin_id in range(1, max(location.bin_count, 0) + 1):
+    added = False
+    for shelf_id in range(1, shelf_count + 1):
+        for bin_id in range(1, bin_count + 1):
             if (shelf_id, bin_id) not in existing:
-                holder_id = f"{location.id}.{bin_id}" if location.shelf_count <= 1 else f"{location.id}.{shelf_id}.{bin_id}"
+                holder_id = build_storage_holder_id(location, shelf_id, bin_id)
                 db.add(models.StorageBin(
                     storage_location_id=location.id,
                     shelf_id=shelf_id,
@@ -3167,6 +3190,76 @@ def ensure_storage_bins(db: Session, location: models.StorageLocation):
                     location_id=holder_id,
                     description="location holder",
                 ))
+                added = True
+    if added:
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+    else:
+        db.commit()
+
+
+def parse_storage_layout_csv(file_text: str) -> list[dict]:
+    reader = csv.DictReader(StringIO(file_text))
+    rows: list[dict] = []
+    for raw_row in reader:
+        row = {str(k or "").strip().lower(): (str(v or "").strip()) for k, v in raw_row.items()}
+        description = row.get("location name", "")
+        location_code = row.get("location_id", "")
+        shelf_count = int(row.get("shelfs") or row.get("shelves") or 1)
+        bin_count = int(row.get("bins") or 1)
+        pallet_storage = (row.get("pallets", "").lower() in {"t", "true", "yes", "1", "y"})
+        if not description:
+            continue
+        rows.append({
+            "location_description": description,
+            "location_code": location_code,
+            "shelf_count": max(shelf_count, 1),
+            "bin_count": max(bin_count, 1),
+            "pallet_storage": pallet_storage,
+        })
+    return rows
+
+
+def reset_inventory_state(db: Session):
+    db.query(models.PartInventory).update(
+        {
+            models.PartInventory.qty_on_hand_total: 0,
+            models.PartInventory.qty_stored: 0,
+            models.PartInventory.qty_queued_to_cut: 0,
+            models.PartInventory.qty_to_bend: 0,
+            models.PartInventory.qty_to_weld: 0,
+        },
+        synchronize_session=False,
+    )
+    db.query(models.StorageBin).update(
+        {
+            models.StorageBin.qty: 0,
+            models.StorageBin.component_id: "",
+            models.StorageBin.description: "location holder",
+        },
+        synchronize_session=False,
+    )
+    bins = db.query(models.StorageBin).order_by(models.StorageBin.storage_location_id.asc(), models.StorageBin.shelf_id.asc(), models.StorageBin.bin_id.asc()).all()
+    location_map = {location.id: location for location in db.query(models.StorageLocation).all()}
+    for storage_bin in bins:
+        location = location_map.get(storage_bin.storage_location_id)
+        if location:
+            storage_bin.location_id = build_storage_holder_id(location, storage_bin.shelf_id, storage_bin.bin_id)
+    db.query(models.Pallet).update({models.Pallet.storage_bin_id: None}, synchronize_session=False)
+    db.commit()
+
+
+def rebuild_storage_locations(db: Session, layout_rows: list[dict]):
+    db.query(models.StorageBin).delete(synchronize_session=False)
+    db.query(models.StorageLocation).delete(synchronize_session=False)
+    db.flush()
+    for layout in layout_rows:
+        location = models.StorageLocation(**layout)
+        db.add(location)
+        db.flush()
+        ensure_storage_bins(db, location)
     db.commit()
 
 
@@ -3293,10 +3386,11 @@ def storage_location_list(request: Request, db: Session = Depends(get_db), user=
 async def storage_location_add(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     form = await request.form()
     location = models.StorageLocation(
+        location_code=(form.get("location_code") or "").strip(),
         location_description=(form.get("location_description") or "").strip(),
         pallet_storage=(form.get("pallet_storage") == "on"),
-        shelf_count=int(form.get("shelf_count") or 1),
-        bin_count=int(form.get("bin_count") or 1),
+        shelf_count=max(int(form.get("shelf_count") or 1), 1),
+        bin_count=max(int(form.get("bin_count") or 1), 1),
     )
     db.add(location)
     db.commit()
@@ -3332,10 +3426,11 @@ async def storage_location_edit(location_id: int, request: Request, db: Session 
     if not location:
         raise HTTPException(404)
     form = await request.form()
+    location.location_code = (form.get("location_code") or "").strip()
     location.location_description = (form.get("location_description") or "").strip()
     location.pallet_storage = (form.get("pallet_storage") == "on")
-    location.shelf_count = int(form.get("shelf_count") or 1)
-    location.bin_count = int(form.get("bin_count") or 1)
+    location.shelf_count = max(int(form.get("shelf_count") or 1), 1)
+    location.bin_count = max(int(form.get("bin_count") or 1), 1)
     db.commit()
     ensure_storage_bins(db, location)
     return RedirectResponse("/inventory/locations", status_code=303)
@@ -3704,6 +3799,28 @@ async def server_maintenance(request: Request, db: Session = Depends(get_db), us
         })
         persisted = save_runtime_settings(RUNTIME_SETTINGS)
         message = f"Data paths saved to {SETTINGS_PATH}. Restart app to apply DB path changes." if persisted else "Failed to persist settings to disk."
+    elif action == "reset_inventory":
+        reset_inventory_state(db)
+        message = "Inventory quantities reset and storage bins cleared."
+    elif action == "rebuild_storage_locations":
+        layout_file = form.get("storage_layout_file")
+        if not isinstance(layout_file, UploadFile) or not layout_file.filename:
+            message = "Please upload a CSV file to rebuild storage locations."
+        else:
+            try:
+                layout_text = (await layout_file.read()).decode("utf-8")
+                layout_rows = parse_storage_layout_csv(layout_text)
+                if not layout_rows:
+                    message = "No valid layout rows found in uploaded file."
+                else:
+                    rebuild_storage_locations(db, layout_rows)
+                    message = f"Rebuilt {len(layout_rows)} storage locations from uploaded file."
+            except (UnicodeDecodeError, ValueError) as exc:
+                db.rollback()
+                message = f"Invalid storage layout file: {exc}"
+            except SQLAlchemyError as exc:
+                db.rollback()
+                message = f"Storage rebuild failed: {exc}"
 
     return RedirectResponse(f"/admin?tab=server-maintenance&message={message}", status_code=302)
 

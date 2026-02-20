@@ -468,6 +468,7 @@ class ConsumableUsageLog(Base):
 class StorageLocation(Base):
     __tablename__ = "storage_locations"
     id: Mapped[int] = mapped_column(primary_key=True)
+    location_code: Mapped[str] = mapped_column(String(80), default="")
     location_description: Mapped[str] = mapped_column(String(200), default="")
     pallet_storage: Mapped[bool] = mapped_column(Boolean, default=False)
     shelf_count: Mapped[int] = mapped_column(Integer, default=1)

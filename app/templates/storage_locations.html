@@ -10,6 +10,8 @@
     <h3>Add Storage Location</h3>
     <label for="location_description">Location Description</label>
     <input id="location_description" name="location_description" required />
+    <label for="location_code">Location Code (optional)</label>
+    <input id="location_code" name="location_code" />
     <label><input type="checkbox" name="pallet_storage" /> Pallet storage</label>
     <label for="shelf_count"># of Shelves</label>
     <input id="shelf_count" type="number" name="shelf_count" min="1" value="1" required />
@@ -23,10 +25,11 @@
 </dialog>
 
 <table>
-  <tr><th>Location ID</th><th>Location Description</th><th>Pallet Storage</th><th># of Shelves</th><th># of Bins</th><th>Used Bins</th><th>Actions</th></tr>
+  <tr><th>Location ID</th><th>Location Code</th><th>Location Description</th><th>Pallet Storage</th><th># of Shelves</th><th># of Bins</th><th>Used Bins</th><th>Actions</th></tr>
   {% for r in rows %}
   <tr>
     <td><a href="/inventory/locations/{{r.id}}">{{r.id}}</a></td>
+    <td>{{r.location_code}}</td>
     <td>{{r.location_description}}</td>
     <td>{{'Y' if r.pallet_storage else 'N'}}</td>
     <td>{{r.shelf_count}}</td>
