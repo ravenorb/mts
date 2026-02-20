@@ -4504,10 +4504,26 @@ def engineering_cutplan_view(job_id: int, request: Request, db: Session = Depend
 
 @app.get("/api/cutplan/{job_id}/model")
 def api_cutplan_model(job_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
-    art = db.query(models.CutArtifact).filter(models.CutArtifact.job_id == job_id, models.CutArtifact.kind == "parsed").order_by(models.CutArtifact.created_at.desc()).first()
-    if not art:
+    parsed_art = db.query(models.CutArtifact).filter(models.CutArtifact.job_id == job_id, models.CutArtifact.kind == "parsed").order_by(models.CutArtifact.created_at.desc()).first()
+    if not parsed_art:
         raise HTTPException(404, "Parsed model not found")
-    return JSONResponse(json.loads(art.json_text))
+    model_payload = json.loads(parsed_art.json_text)
+
+    skeleton_art = (
+        db.query(models.CutArtifact)
+        .filter(models.CutArtifact.job_id == job_id, models.CutArtifact.kind == "skeleton")
+        .order_by(models.CutArtifact.created_at.desc())
+        .first()
+    )
+    if skeleton_art and skeleton_art.json_text:
+        skeleton_payload = json.loads(skeleton_art.json_text)
+        if isinstance(skeleton_payload, dict):
+            if "skeletonDebugLines" in skeleton_payload:
+                model_payload["skeletonDebugLines"] = skeleton_payload["skeletonDebugLines"]
+            if "skeletonCuts" in skeleton_payload:
+                model_payload["skeletonCuts"] = skeleton_payload["skeletonCuts"]
+
+    return JSONResponse(model_payload)
 
 
 @app.post("/api/cutplan/{job_id}/reorder")

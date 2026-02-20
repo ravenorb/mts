@@ -34,7 +34,7 @@
     <h3>Parts (top → bottom)</h3>
     <div id="partsList"></div>
 
-    <h3>Contours (global order)</h3>
+    <h3 id="contoursTitle">Contours</h3>
     <div id="list"></div>
 
     <hr>
@@ -129,15 +129,35 @@ function rebuildContourOrderFromPartOrder(){
   order = contourBlocks.map((b) => b.blockId);
 }
 function renderList(){
+  const title = document.getElementById("contoursTitle");
   const list = document.getElementById("list"); list.innerHTML = "";
   const byBlock = new Map(contourBlocks.map(x => [x.blockId, x.rows]));
   const displayByPart = new Map(drawParts.map(r => [r.idx, r.displayIndex]));
+  const selectedRows = [];
+
+  if(currentPart === null){
+    title.textContent = "Contours";
+    const empty = document.createElement("div");
+    empty.className = "small";
+    empty.textContent = "Select a part to view and reorder that part's contours.";
+    list.appendChild(empty);
+    return;
+  }
+
+  title.textContent = `Contours (Part ${displayByPart.get(currentPart) ?? "?"})`;
+
   order.forEach((blockId, idx) => {
     const rows = byBlock.get(blockId); if(!rows?.length) return;
     const row = rows[0];
+    if(row.partIndex !== currentPart) return;
+    selectedRows.push({blockId, globalIdx: idx, row});
+  });
+
+  selectedRows.forEach((entry, idx) => {
+    const {blockId, globalIdx, row} = entry;
     const div = document.createElement("div"); div.className = "item";
     const partNum = displayByPart.get(row.partIndex) ?? "?";
-    div.innerHTML = `<div style="width:34px; text-align:right; opacity:0.7">${idx+1}</div><div style="flex:1"><div>P${partNum}-C${row.contour.index ?? "?"} <span class="small">(${row.contour.type})</span></div><div class="small">prog ${row.part.program_id ?? "?"} contours ${row.part.contour_count ?? "?"}</div></div><button ${idx===0?"disabled":""} onclick="moveUp(${idx})">↑</button><button ${idx===order.length-1?"disabled":""} onclick="moveDown(${idx})">↓</button>`;
+    div.innerHTML = `<div style="width:34px; text-align:right; opacity:0.7">${idx+1}</div><div style="flex:1"><div>P${partNum}-C${row.contour.index ?? "?"} <span class="small">(${row.contour.type})</span></div><div class="small">prog ${row.part.program_id ?? "?"} contours ${row.part.contour_count ?? "?"}</div></div><button ${idx===0?"disabled":""} onclick="moveUp(${globalIdx})">↑</button><button ${idx===selectedRows.length-1?"disabled":""} onclick="moveDown(${globalIdx})">↓</button>`;
     list.appendChild(div);
   });
 }
@@ -145,6 +165,16 @@ function renderPartsList(){
   const node = document.getElementById("partsList");
   node.innerHTML = "";
   const byPart = new Map(drawParts.map((row) => [row.idx, row]));
+
+  if(currentPart !== null){
+    const selected = byPart.get(currentPart);
+    const div = document.createElement("div");
+    div.className = "small";
+    div.textContent = selected ? `Focused Part ${selected.displayIndex}. Click "Show All" to return to part ordering.` : 'Focused part selected.';
+    node.appendChild(div);
+    return;
+  }
+
   partOrder.forEach((partIdx, idx) => {
     const row = byPart.get(partIdx);
     if(!row) return;
@@ -170,10 +200,38 @@ function movePartDown(i){
   renderList();
   draw();
 }
-function moveUp(i){ [order[i-1], order[i]] = [order[i], order[i-1]]; renderList(); draw(); }
-function moveDown(i){ [order[i], order[i+1]] = [order[i+1], order[i]]; renderList(); draw(); }
-function showAll(){ currentPart = null; draw(); }
-function focusPart(partIndex){ currentPart = partIndex; draw(); }
+function moveUp(globalIdx){
+  if(currentPart === null) return;
+  let swapIdx = -1;
+  for(let i = globalIdx - 1; i >= 0; i -= 1){
+    const blockId = order[i];
+    const block = contourBlocks.find((x) => x.blockId === blockId);
+    if(block?.rows?.[0]?.partIndex === currentPart){
+      swapIdx = i;
+      break;
+    }
+  }
+  if(swapIdx < 0) return;
+  [order[swapIdx], order[globalIdx]] = [order[globalIdx], order[swapIdx]];
+  renderList(); draw();
+}
+function moveDown(globalIdx){
+  if(currentPart === null) return;
+  let swapIdx = -1;
+  for(let i = globalIdx + 1; i < order.length; i += 1){
+    const blockId = order[i];
+    const block = contourBlocks.find((x) => x.blockId === blockId);
+    if(block?.rows?.[0]?.partIndex === currentPart){
+      swapIdx = i;
+      break;
+    }
+  }
+  if(swapIdx < 0) return;
+  [order[globalIdx], order[swapIdx]] = [order[swapIdx], order[globalIdx]];
+  renderList(); draw();
+}
+function showAll(){ currentPart = null; renderPartsList(); renderList(); draw(); }
+function focusPart(partIndex){ currentPart = partIndex; renderPartsList(); renderList(); draw(); }
 function toggleContours(){ showContours = !showContours; document.getElementById("toggleContoursBtn").textContent = `Contours: ${showContours ? "On" : "Off"}`; draw(); }
 function togglePanMode(){
   panMode = !panMode;
