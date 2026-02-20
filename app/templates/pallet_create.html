@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Create Pallet</h2>
+<form method="post" action="/production/create-order" class="panel-form">
+  <label>Frame part ID</label>
+  <select name="frame_part_id" id="frame-part-id" required>
+    <option value="">-- select frame part --</option>
+    {% for part_id in frame_parts %}<option value="{{part_id}}">{{part_id}}</option>{% endfor %}
+  </select>
+  <label>HK MPF file</label>
+  <select name="mpf_master_id" id="mpf-master-id" required><option value="">-- select frame part first --</option></select>
+  <label>Expected quantity</label>
+  <select name="expected_quantity" id="expected-quantity" required><option value="">-- select HK MPF first --</option></select>
+  <div class="action-row"><button type="submit">Create Pallet + Traveler</button><a class="action-btn secondary" href="/production">Cancel</a></div>
+</form>
+<script>
+(() => {
+  const framePartSelect = document.getElementById('frame-part-id');
+  const mpfSelect = document.getElementById('mpf-master-id');
+  const expectedQtySelect = document.getElementById('expected-quantity');
+  let currentMpfOptions = [];
+  framePartSelect?.addEventListener('change', async () => {
+    const framePart = framePartSelect.value;
+    mpfSelect.innerHTML = '<option value="">-- loading --</option>';
+    expectedQtySelect.innerHTML = '<option value="">-- select HK MPF first --</option>';
+    if (!framePart) return;
+    const response = await fetch(`/production/mpf-options/${encodeURIComponent(framePart)}`);
+    const payload = await response.json();
+    currentMpfOptions = payload.items || [];
+    mpfSelect.innerHTML = '<option value="">-- select HK MPF --</option>' + currentMpfOptions.map((item) => `<option value="${item.id}">${item.filename}</option>`).join('');
+  });
+  mpfSelect?.addEventListener('change', () => {
+    const selected = currentMpfOptions.find((item) => String(item.id) === mpfSelect.value);
+    expectedQtySelect.innerHTML = '<option value="">-- select expected quantity --</option>';
+    if (!selected?.qty_produced) return;
+    for (let m = 1; m <= 25; m += 1) {
+      const q = (Number(selected.qty_produced) * m).toFixed(2);
+      expectedQtySelect.innerHTML += `<option value="${q}">${q}</option>`;
+    }
+  });
+})();
+</script>
+{% endblock %}

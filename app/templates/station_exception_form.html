@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{station.station_name}} Exception Form</h2>
+<form method="post" action="/stations/{{station.id}}/exception" class="panel-form">
+  {% if pallet %}<input type="hidden" name="pallet_id" value="{{pallet.id}}" />{% endif %}
+  <label>Component</label>
+  <select name="component_id" required>
+    <option value="">-- choose component --</option>
+    {% for c in components %}<option value="{{c.component_id}}">{{c.component_id}}</option>{% endfor %}
+  </select>
+  <label>Quantity</label><input type="number" step="0.01" name="qty" required />
+  <label>Type</label>
+  <select name="qty_type"><option value="scrap">scrap</option><option value="transfer">transfer</option><option value="other">other</option></select>
+  <label>Destination</label><input name="destination" placeholder="scrap bin id / station" />
+  <label>Notes</label><textarea name="notes"></textarea>
+  <div class="action-row">
+    <button type="submit">Log Exception</button>
+    <a class="action-btn secondary" href="/stations/{{station.id}}">Back</a>
+  </div>
+</form>
+
+<table>
+  <tr><th>ID</th><th>Pallet</th><th>Component</th><th>Qty</th><th>Type</th><th>Destination</th><th>Status</th></tr>
+  {% for e in exceptions %}
+  <tr><td>{{e.id}}</td><td>{{e.pallet_id}}</td><td>{{e.component_id}}</td><td>{{e.qty}}</td><td>{{e.qty_type}}</td><td>{{e.destination}}</td><td>{{e.status}}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

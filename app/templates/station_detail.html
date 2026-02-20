@@ -2,13 +2,14 @@
 {% block content %}
 <h2>{{station.station_name}} Dashboard</h2>
 
-<div class="action-row">
+<div class="action-row station-dashboard-actions">
   {% if active_pallet %}
-  <form method="post" action="/stations/{{station.id}}/save-work"><button type="submit">Save Pallet Work</button></form>
-  <a class="action-btn" href="/stations/{{station.id}}/complete">Complete Pallet</a>
+  <form method="post" action="/stations/{{station.id}}/save-work"><button class="dashboard-big-btn" type="submit">Save Pallet Work</button></form>
+  <a class="action-btn dashboard-big-btn" href="/stations/{{station.id}}/complete">Complete Pallet</a>
   {% else %}
-  <form method="post" action="/stations/{{station.id}}/start-next"><button type="submit">Start Next Pallet</button></form>
+  <form method="post" action="/stations/{{station.id}}/start-next"><button class="dashboard-big-btn" type="submit">Start Next Pallet</button></form>
   {% endif %}
+  <a class="action-btn dashboard-big-btn secondary" href="/stations/{{station.id}}/exception">Exception Form</a>
   <a class="action-btn secondary" href="/entity/maintenance_requests/new">Report Maintenance</a>
   <a class="action-btn secondary" href="/entity/engineering_questions/new">Report Engineering Problem</a>
   <a class="action-btn secondary" href="/entity/consumable_usage_logs/new">Log Consumable Use</a>

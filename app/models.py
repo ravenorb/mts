@@ -282,6 +282,13 @@ class Pallet(Base):
     status: Mapped[str] = mapped_column(String(40), default="staged")
     current_station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
     storage_bin_id: Mapped[int | None] = mapped_column(ForeignKey("storage_bins.id"), nullable=True)
+    current_location: Mapped[str] = mapped_column(String(80), default="")
+    completed_stations: Mapped[str] = mapped_column(Text, default="")
+    release_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    station_order: Mapped[str] = mapped_column(Text, default="")
+    frame_qty_per_sheet: Mapped[float] = mapped_column(Float, default=0)
+    material: Mapped[str] = mapped_column(String(120), default="")
+    cut_sheet: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_by: Mapped[str] = mapped_column(String(80), default="system")
 
@@ -306,6 +313,35 @@ class PalletPart(Base):
     external_quantity_needed: Mapped[float] = mapped_column(Float, default=0)
     actual_quantity: Mapped[float] = mapped_column(Float, default=0)
     scrap_quantity: Mapped[float] = mapped_column(Float, default=0)
+
+
+class PalletBom(Base):
+    __tablename__ = "pallet_bom"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pallet_id: Mapped[int] = mapped_column(ForeignKey("pallets.id"))
+    component_id: Mapped[str] = mapped_column(String(80), default="")
+    required_qty: Mapped[float] = mapped_column(Float, default=0)
+    expected_qty: Mapped[float] = mapped_column(Float, default=0)
+    qty_cut: Mapped[float] = mapped_column(Float, default=0)
+    qty_formed: Mapped[float] = mapped_column(Float, default=0)
+    qty_welded: Mapped[float] = mapped_column(Float, default=0)
+    qty_scrapped: Mapped[float] = mapped_column(Float, default=0)
+    qty_transferred: Mapped[float] = mapped_column(Float, default=0)
+
+
+class PalletException(Base):
+    __tablename__ = "pallet_exceptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pallet_id: Mapped[int] = mapped_column(ForeignKey("pallets.id"))
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"), nullable=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    component_id: Mapped[str] = mapped_column(String(80), default="")
+    qty: Mapped[float] = mapped_column(Float, default=0)
+    qty_type: Mapped[str] = mapped_column(String(20), default="scrap")
+    destination: Mapped[str] = mapped_column(String(80), default="")
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class PalletEvent(Base):
