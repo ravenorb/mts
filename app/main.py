@@ -1264,7 +1264,7 @@ def production_new_pallet_form(request: Request, db: Session = Depends(get_db), 
     })
 
 
-@app.get("/production/pallet/{pallet_id}", response_class=HTMLResponse)
+@app.get("/production/pallet/{pallet_id:int}", response_class=HTMLResponse)
 def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
@@ -1280,7 +1280,7 @@ def pallet_detail(pallet_id: int, request: Request, db: Session = Depends(get_db
     return templates.TemplateResponse("pallet_detail.html", {"request": request, "user": user, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, "pallet": pallet, "part_rows": part_rows, "route_rows": route_rows, "component_station_rollup": component_station_rollup, "events": events, "stations": stations, "available_bins": available_bins, "station_label": station_label, "location_label": pallet_location_label(db, pallet), "errors": {}})
 
 
-@app.get("/production/pallet/{pallet_id}/traveler")
+@app.get("/production/pallet/{pallet_id:int}/traveler")
 def pallet_traveler_download(pallet_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
@@ -1292,7 +1292,7 @@ def pallet_traveler_download(pallet_id: int, db: Session = Depends(get_db), user
     return FileResponse(path=file_path, filename=file_path.name)
 
 
-@app.get("/production/pallet/{pallet_id}/edit", response_class=HTMLResponse)
+@app.get("/production/pallet/{pallet_id:int}/edit", response_class=HTMLResponse)
 def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
@@ -1323,7 +1323,7 @@ def pallet_edit(pallet_id: int, request: Request, db: Session = Depends(get_db),
     })
 
 
-@app.post("/production/pallet/{pallet_id}/edit")
+@app.post("/production/pallet/{pallet_id:int}/edit")
 async def pallet_edit_save(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
@@ -1379,7 +1379,7 @@ async def pallet_edit_save(pallet_id: int, request: Request, db: Session = Depen
     return RedirectResponse(f"/production/pallet/{pallet.id}/edit", status_code=302)
 
 
-@app.post("/production/pallet/{pallet_id}/move")
+@app.post("/production/pallet/{pallet_id:int}/move")
 def pallet_move(
     pallet_id: int,
     destination_type: str = Form("station"),
@@ -1424,7 +1424,7 @@ def pallet_move(
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
 
-@app.post("/production/pallet/{pallet_id}/release")
+@app.post("/production/pallet/{pallet_id:int}/release")
 def pallet_release_to_hk_queue(pallet_id: int, db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
@@ -1470,7 +1470,7 @@ def pallet_release_to_hk_queue(pallet_id: int, db: Session = Depends(get_db), us
     return RedirectResponse(f"/production/pallet/{pallet.id}", status_code=302)
 
 
-@app.post("/production/pallet/{pallet_id}/delete")
+@app.post("/production/pallet/{pallet_id:int}/delete")
 def production_pallet_delete(pallet_id: int, redirect_to: str = Form("/production?tab=active"), db: Session = Depends(get_db), user=Depends(require_login)):
     pallet = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not pallet:
@@ -3842,7 +3842,7 @@ def entity_delete(entity: str, item_id: int, db: Session = Depends(get_db), user
     return RedirectResponse(f"/entity/{entity}", status_code=302)
 
 
-@app.post("/pallets/{pallet_id}/split")
+@app.post("/pallets/{pallet_id:int}/split")
 async def split_pallet(pallet_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
     source = db.query(models.Pallet).filter_by(id=pallet_id).first()
     if not source:
