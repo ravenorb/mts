@@ -4,17 +4,18 @@
 <meta charset="utf-8">
 <title>Cut Planner - {{job.name}}</title>
 <style>
-body { margin:0; font-family: Arial; display:flex; height:100vh; }
+.cutplanner-layout { margin: 0; font-family: Arial; display:flex; height:calc(100vh - 170px); }
 #left { width:360px; background:#1b1b1b; color:#eee; padding:12px; overflow:auto; }
 #main { flex:1; background:#000; position:relative; }
-canvas { width:100%; height:100%; display:block; }
-button { cursor:pointer; }
+#main canvas { width:100%; height:100%; display:block; }
+#left button { cursor:pointer; }
 .item { display:flex; align-items:center; gap:6px; padding:4px 0; border-bottom:1px solid #333; }
 .small { font-size:12px; opacity:0.8; }
-a { color:#9cf; }
+#left a { color:#9cf; }
 </style>
 </head>
 <body>
+<div class="cutplanner-layout">
   <div id="left">
     <h2 style="margin-top:0">{{job.name}}</h2>
     <div class="small">Job ID: {{job.id}}</div>
@@ -34,184 +35,99 @@ a { color:#9cf; }
     <div id="list"></div>
 
     <hr>
-    <div class="small">
-      Click canvas to cycle parts (fast UI, no drama). Skeleton cuts render in red.
-    </div>
+    <div class="small">Click canvas to cycle parts. Skeleton cuts render in red.</div>
   </div>
 
   <div id="main">
     <canvas id="cv"></canvas>
   </div>
+</div>
 
 <script>
 const jobId = {{job.id}};
 const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
-
-function resize(){
-  cv.width = cv.clientWidth;
-  cv.height = cv.clientHeight;
-  draw();
-}
+function resize(){ cv.width = cv.clientWidth; cv.height = cv.clientHeight; draw(); }
 window.addEventListener("resize", resize);
-
 let model = null;
-let currentPart = null; // null = all
-let order = [];         // contour ids
-
-function flattenContours(m){
-  const out = [];
-  m.parts.forEach((p, pi) => {
-    p.contours.forEach(c => out.push({partIndex: pi, part: p, contour: c}));
-  });
-  return out;
+let currentPart = null;
+let order = [];
+let baseScale = 1;
+let zoom = 1;
+let panX = 0;
+let panY = 0;
+function fitView(){
+  if(!model) return;
+  const sheet = model.sheet; const pad = 60;
+  baseScale = Math.min((cv.width - pad*2)/(sheet.width||1), (cv.height - pad*2)/(sheet.height||1));
+  zoom = 1;
+  panX = pad;
+  panY = pad;
 }
-
-function initOrder(){
-  const flat = flattenContours(model);
-  order = flat.map(x => x.contour.id);
-}
-
+function flattenContours(m){ const out=[]; m.parts.forEach((p, pi)=>p.contours.forEach(c=>out.push({partIndex:pi, part:p, contour:c}))); return out; }
+function initOrder(){ order = flattenContours(model).map(x => x.contour.id); }
 function renderList(){
-  const list = document.getElementById("list");
-  list.innerHTML = "";
-  const flat = flattenContours(model);
-  const byId = new Map(flat.map(x => [x.contour.id, x]));
-
+  const list = document.getElementById("list"); list.innerHTML = "";
+  const flat = flattenContours(model); const byId = new Map(flat.map(x => [x.contour.id, x]));
   order.forEach((cid, idx) => {
-    const row = byId.get(cid);
-    const div = document.createElement("div");
-    div.className = "item";
-    div.innerHTML = `
-      <div style="width:34px; text-align:right; opacity:0.7">${idx+1}</div>
-      <div style="flex:1">
-        <div>#${cid} <span class="small">(${row.contour.type})</span></div>
-        <div class="small">prog ${row.part.program_id ?? "?"} tech ${row.part.tech ?? "?"}</div>
-      </div>
-      <button ${idx===0?"disabled":""} onclick="moveUp(${idx})">↑</button>
-      <button ${idx===order.length-1?"disabled":""} onclick="moveDown(${idx})">↓</button>
-    `;
+    const row = byId.get(cid); if(!row) return;
+    const div = document.createElement("div"); div.className = "item";
+    div.innerHTML = `<div style="width:34px; text-align:right; opacity:0.7">${idx+1}</div><div style="flex:1"><div>#${cid} <span class="small">(${row.contour.type})</span></div><div class="small">prog ${row.part.program_id ?? "?"} tech ${row.part.tech ?? "?"}</div></div><button ${idx===0?"disabled":""} onclick="moveUp(${idx})">↑</button><button ${idx===order.length-1?"disabled":""} onclick="moveDown(${idx})">↓</button>`;
     list.appendChild(div);
   });
 }
-
 function moveUp(i){ [order[i-1], order[i]] = [order[i], order[i-1]]; renderList(); draw(); }
 function moveDown(i){ [order[i], order[i+1]] = [order[i+1], order[i]]; renderList(); draw(); }
-
 function showAll(){ currentPart = null; draw(); }
-
 async function exportReorder(){
-  const r = await fetch(`/api/cutplan/${jobId}/reorder`, {
-    method:"POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({order})
-  });
-  const j = await r.json();
-  if(j.download){
-    const a = document.getElementById("dlRe");
-    a.href = j.download;
-    a.textContent = "Download reordered MPF";
-    a.style.display = "inline";
-  }
+  const r = await fetch(`/api/cutplan/${jobId}/reorder`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({order})});
+  const j = await r.json(); if(j.download){ const a = document.getElementById("dlRe"); a.href = j.download; a.textContent = "Download reordered MPF"; a.style.display = "inline"; }
 }
-
 async function computeSkeleton(){
-  const r = await fetch(`/api/cutplan/${jobId}/compute_skeleton`, { method:"POST" });
-  const j = await r.json();
-  if(j.download){
-    const a = document.getElementById("dlSk");
-    a.href = j.download;
-    a.textContent = "Download skeleton MPF";
-    a.style.display = "inline";
-  }
-  // refresh model from latest skeleton artifact? (v1 keeps parsed model; skeleton overlay appears after next load)
-  // For simplicity: reload page
+  const r = await fetch(`/api/cutplan/${jobId}/compute_skeleton`, {method:"POST"});
+  const j = await r.json(); if(j.download){ const a = document.getElementById("dlSk"); a.href = j.download; a.textContent = "Download skeleton MPF"; a.style.display = "inline"; }
   location.reload();
 }
-
-function W(p, scale, ox, oy){ return [p[0]*scale + ox, cv.height - (p[1]*scale + oy)]; }
-
+function worldToCanvas(p){ const scale = baseScale * zoom; return [p[0]*scale + panX, cv.height - (p[1]*scale + panY)]; }
+function canvasToWorld(x, y){ const scale = baseScale * zoom; return [(x - panX)/scale, ((cv.height - y) - panY)/scale]; }
 function draw(){
   if(!model) return;
   ctx.clearRect(0,0,cv.width,cv.height);
-
   const sheet = model.sheet;
-  const pad = 60;
-  const scale = Math.min((cv.width - pad*2)/(sheet.width||1), (cv.height - pad*2)/(sheet.height||1));
-  const ox = pad, oy = pad;
-
-  // sheet
-  ctx.strokeStyle="#444"; ctx.lineWidth=2;
-  ctx.strokeRect(ox, cv.height-(sheet.height*scale+oy), sheet.width*scale, sheet.height*scale);
-
-  // contour lookup by id
-  const flat = flattenContours(model);
-  const byId = new Map(flat.map(x => [x.contour.id, x]));
-
-  // draw contours in order
+  const scale = baseScale * zoom;
+  ctx.strokeStyle="#444"; ctx.lineWidth=2; ctx.strokeRect(panX, cv.height-(sheet.height*scale+panY), sheet.width*scale, sheet.height*scale);
+  const flat = flattenContours(model); const byId = new Map(flat.map(x => [x.contour.id, x]));
   order.forEach((cid, idx) => {
-    const row = byId.get(cid); if(!row) return;
-    if(currentPart !== null && row.partIndex !== currentPart) return;
-
-    const c = row.contour;
-    const hue = (row.partIndex * 70) % 360;
-
-    if(c.type === "outer"){ ctx.strokeStyle = `hsl(${hue},80%,60%)`; ctx.lineWidth = 3; }
-    else { ctx.strokeStyle = "#00ffff"; ctx.lineWidth = 2; }
-
+    const row = byId.get(cid); if(!row) return; if(currentPart !== null && row.partIndex !== currentPart) return;
+    const c = row.contour; const hue = (row.partIndex * 70) % 360;
+    if(c.type === "outer"){ ctx.strokeStyle = `hsl(${hue},80%,60%)`; ctx.lineWidth = 3; } else { ctx.strokeStyle = "#00ffff"; ctx.lineWidth = 2; }
     ctx.beginPath();
-    c.segments.forEach(s => {
-      if(s.kind === "line"){
-        const a = W(s.a, scale, ox, oy), b = W(s.b, scale, ox, oy);
-        ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
-      } else if(s.kind === "polyline"){
-        s.points.forEach((pt,i)=>{ const q=W(pt,scale,ox,oy); if(i===0) ctx.moveTo(q[0],q[1]); else ctx.lineTo(q[0],q[1]); });
-      }
-    });
+    c.segments.forEach(s => { if(s.kind === "line"){ const a=worldToCanvas(s.a), b=worldToCanvas(s.b); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); } else if(s.kind === "polyline"){ s.points.forEach((pt,i)=>{ const q=worldToCanvas(pt); if(i===0) ctx.moveTo(q[0],q[1]); else ctx.lineTo(q[0],q[1]); }); }});
     ctx.stroke();
-
-    // order label
-    const first = c.segments[0];
-    const anchor = first?.kind==="line" ? first.a : first?.points?.[0];
-    if(anchor){
-      const t = W(anchor, scale, ox, oy);
-      ctx.fillStyle="#fff"; ctx.font="12px Arial";
-      ctx.fillText(String(idx+1), t[0]+4, t[1]-4);
-    }
+    const first = c.segments[0]; const anchor = first?.kind==="line" ? first.a : first?.points?.[0];
+    if(anchor){ const t = worldToCanvas(anchor); ctx.fillStyle="#fff"; ctx.font="12px Arial"; ctx.fillText(String(idx+1), t[0]+4, t[1]-4); }
   });
-
-  // skeleton cuts overlay (red), if present
   if(model.skeletonCuts){
     ctx.strokeStyle="#ff3333"; ctx.lineWidth=3;
-    model.skeletonCuts.forEach(sc=>{
-      const a=W(sc.a,scale,ox,oy), b=W(sc.b,scale,ox,oy);
-      ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
-      const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;
-      ctx.fillStyle="#ffaaaa"; ctx.font="12px Arial";
-      ctx.fillText("SK"+sc.id, mx+4, my-4);
-    });
+    model.skeletonCuts.forEach(sc=>{ const a=worldToCanvas(sc.a), b=worldToCanvas(sc.b); ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke(); const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2; ctx.fillStyle="#ffaaaa"; ctx.font="12px Arial"; ctx.fillText("SK"+sc.id, mx+4, my-4);});
   }
 }
-
-cv.addEventListener("click", () => {
+cv.addEventListener("wheel", (e) => {
   if(!model) return;
-  if(currentPart === null) currentPart = 0;
-  else currentPart = (currentPart + 1) % model.parts.length;
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const [wx, wy] = canvasToWorld(cx, cy);
+  const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+  zoom = Math.max(0.2, Math.min(10, zoom * factor));
+  const scale = baseScale * zoom;
+  panX = cx - wx * scale;
+  panY = (cv.height - cy) - wy * scale;
   draw();
-});
-
-(async function(){
-  // Prefer latest skeleton model if exists; else parsed
-  const parsed = await (await fetch(`/api/cutplan/${jobId}/model`)).json();
-
-  // Try to fetch skeleton artifact model (optional endpoint would be cleaner, keeping it simple):
-  // If you want this clean: add /api/cutplan/{job_id}/latest that returns skeleton if present, else parsed.
-  model = parsed;
-
-  initOrder();
-  renderList();
-  resize();
-})();
+}, { passive: false });
+cv.addEventListener("click", () => { if(!model) return; if(currentPart === null) currentPart = 0; else currentPart = (currentPart + 1) % model.parts.length; draw(); });
+(async function(){ model = await (await fetch(`/api/cutplan/${jobId}/model`)).json(); initOrder(); renderList(); resize(); fitView(); draw(); })();
 </script>
 </body>
 </html>
