@@ -3727,6 +3727,7 @@ def parse_hk_mpf(text: str) -> dict:
     sheet = {"width": None, "height": None}
     parts = []
     current_part = None
+    active_parts = []
     current_contours = []
     part_starts: dict[int, list[dict]] = {}
     for raw in text.splitlines():
@@ -3752,6 +3753,7 @@ def parse_hk_mpf(text: str) -> dict:
                 "contours": [],
             }
             parts.append(current_part)
+            active_parts = [current_part]
             if start_line is not None:
                 part_starts.setdefault(start_line, []).append(current_part)
             continue
@@ -3762,11 +3764,16 @@ def parse_hk_mpf(text: str) -> dict:
             x = vals[2] if len(vals) >= 3 else x
             y = vals[3] if len(vals) >= 4 else y
             placements = part_starts.get(line_no or -1)
-            if not placements:
+            if placements:
+                active_parts = placements
+            elif active_parts:
+                placements = active_parts
+            else:
                 if current_part is None:
                     current_part = {"program_id": None, "tech": None, "offset": [0.0, 0.0], "contours": []}
                     parts.append(current_part)
                 placements = [current_part]
+                active_parts = placements
 
             current_contours = []
             ctype = "outer" if (int(vals[0]) if vals else 0) == 0 else "hole"
@@ -3785,6 +3792,7 @@ def parse_hk_mpf(text: str) -> dict:
             continue
         if "HKPED" in u:
             current_part = None
+            active_parts = []
             current_contours = []
             cut_on = False
             continue
