@@ -150,7 +150,9 @@ function renderPartsList(){
     if(!row) return;
     const div = document.createElement("div");
     div.className = "item";
-    div.innerHTML = `<button onclick="focusPart(${row.idx})">Part ${idx + 1}</button><div class="small" style="margin-left:auto">prog ${row.part.program_id ?? "?"} / contours ${row.part.contour_count ?? "?"}</div><button ${idx===0?"disabled":""} onclick="movePartUp(${idx})">↑</button><button ${idx===partOrder.length-1?"disabled":""} onclick="movePartDown(${idx})">↓</button>`;
+    const programLabel = row.part.program_id ? `N${row.part.program_id}` : "?";
+    const firstContour = row.part.first_contour_id ?? "?";
+    div.innerHTML = `<button onclick="focusPart(${row.idx})">Part ${idx + 1}</button><div class="small" style="margin-left:auto">prog ${programLabel} / first contour ${firstContour} / contours ${row.part.contour_count ?? "?"}</div><button ${idx===0?"disabled":""} onclick="movePartUp(${idx})">↑</button><button ${idx===partOrder.length-1?"disabled":""} onclick="movePartDown(${idx})">↓</button>`;
     node.appendChild(div);
   });
 }
