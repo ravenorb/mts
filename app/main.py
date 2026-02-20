@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import subprocess
@@ -190,6 +191,7 @@ def engineering_nav_context() -> dict:
             {"label": "Overview", "href": "/engineering"},
             {"label": "Parts", "href": "/engineering/parts"},
             {"label": "HK MPFs", "href": "/engineering/hk-mpfs"},
+            {"label": "HK Cut Planner", "href": "/engineering/hk-mpf/cutplanner"},
             {"label": "WJ Gcode", "href": "/engineering/wj-gcode"},
             {"label": "ABB Modules", "href": "/engineering/abb-modules"},
             {"label": "PDFs", "href": "/engineering/pdfs"},
@@ -3672,3 +3674,365 @@ def create_traveler_file(db: Session, pallet_id: int):
         lines.append(f"Part Revision {p.part_revision_id}: qty {p.actual_quantity}")
     out = PDF_DIR / f"traveler_{pallet.pallet_code}.txt"
     out.write_text("\n".join(lines))
+
+
+def _require_cutplan_write(user):
+    if user.role not in ("admin", "planner") and not can_write(user, "parts"):
+        raise HTTPException(status_code=403)
+
+
+def cutplan_storage_root() -> Path:
+    root = Path("data")
+    (root / "mpf").mkdir(parents=True, exist_ok=True)
+    (root / "gen").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)"
+RE_FLOATS = re.compile(NUM)
+RE_X = re.compile(r"\bX(" + NUM + r")\b", re.I)
+RE_Y = re.compile(r"\bY(" + NUM + r")\b", re.I)
+RE_I = re.compile(r"\bI(" + NUM + r")\b", re.I)
+RE_J = re.compile(r"\bJ(" + NUM + r")\b", re.I)
+
+
+def _arc_points(start, end, i, j, cw: bool, step_deg: float = 6.0):
+    sx, sy = start
+    ex, ey = end
+    cx, cy = sx + i, sy + j
+    a0 = math.atan2(sy - cy, sx - cx)
+    a1 = math.atan2(ey - cy, ex - cx)
+    if cw:
+        while a1 > a0:
+            a1 -= 2 * math.pi
+    else:
+        while a1 < a0:
+            a1 += 2 * math.pi
+    total = a1 - a0
+    n = max(8, int(abs(total) / math.radians(step_deg)) + 1)
+    r = math.hypot(sx - cx, sy - cy)
+    return [[cx + r * math.cos(a0 + total * (k / n)), cy + r * math.sin(a0 + total * (k / n))] for k in range(n + 1)]
+
+
+def parse_hk_mpf(text: str) -> dict:
+    x = y = 0.0
+    cut_on = False
+    sheet = {"width": None, "height": None}
+    parts = []
+    current_part = None
+    current_contour = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        u = line.upper()
+        if u.startswith("HKINI"):
+            vals = [float(v) for v in RE_FLOATS.findall(u)]
+            if len(vals) >= 3:
+                sheet["width"] = vals[1]
+                sheet["height"] = vals[2]
+            continue
+        if "HKOST(" in u:
+            vals = [float(v) for v in RE_FLOATS.findall(u)]
+            current_part = {"program_id": int(vals[3]) if len(vals) >= 4 else None, "tech": int(vals[4]) if len(vals) >= 5 else None, "contours": []}
+            parts.append(current_part)
+            continue
+        if "HKSTR(" in u:
+            vals = [float(v) for v in RE_FLOATS.findall(u)]
+            current_contour = {"type": "outer" if (int(vals[0]) if vals else 0) == 0 else "hole", "hkstr": vals, "segments": []}
+            if current_part is None:
+                current_part = {"program_id": None, "tech": None, "contours": []}
+                parts.append(current_part)
+            current_part["contours"].append(current_contour)
+            continue
+        if "HKCUT" in u:
+            cut_on = True
+            continue
+        if "HKSTO" in u:
+            cut_on = False
+            current_contour = None
+            continue
+        if "HKPED" in u:
+            current_part = None
+            current_contour = None
+            cut_on = False
+            continue
+        if u.startswith("WHEN") or not cut_on or current_contour is None:
+            continue
+        if u.startswith("G1"):
+            nx = float(RE_X.search(u).group(1)) if RE_X.search(u) else x
+            ny = float(RE_Y.search(u).group(1)) if RE_Y.search(u) else y
+            current_contour["segments"].append({"kind": "line", "a": [x, y], "b": [nx, ny]})
+            x, y = nx, ny
+            continue
+        if u.startswith("G2") or u.startswith("G3"):
+            mx, my, mi, mj = RE_X.search(u), RE_Y.search(u), RE_I.search(u), RE_J.search(u)
+            if not (mx and my and mi and mj):
+                continue
+            nx, ny = float(mx.group(1)), float(my.group(1))
+            current_contour["segments"].append({"kind": "polyline", "points": _arc_points((x, y), (nx, ny), float(mi.group(1)), float(mj.group(1)), cw=u.startswith("G2"))})
+            x, y = nx, ny
+    sheet["width"] = float(sheet["width"] or 0.0)
+    sheet["height"] = float(sheet["height"] or 0.0)
+    contour_id = 1
+    for part in parts:
+        for contour in part["contours"]:
+            contour["id"] = contour_id
+            contour_id += 1
+    return {"sheet": sheet, "parts": parts}
+
+
+def _contour_to_ring(contour: dict, tol: float = 1e-4):
+    pts = []
+    for seg in contour["segments"]:
+        if seg["kind"] == "line":
+            if not pts:
+                pts.append(seg["a"])
+            pts.append(seg["b"])
+        elif seg["kind"] == "polyline":
+            if not pts:
+                pts.extend(seg["points"])
+            elif pts[-1] == seg["points"][0]:
+                pts.extend(seg["points"][1:])
+            else:
+                pts.extend(seg["points"])
+    if len(pts) < 4:
+        return None
+    if math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) > tol:
+        pts.append(pts[0])
+    return pts
+
+
+def compute_skeleton(model: dict) -> dict:
+    try:
+        from shapely.geometry import LineString, Polygon
+        from shapely.ops import unary_union
+    except ModuleNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="Shapely dependency is not installed.") from exc
+
+    def parts_to_polygons() -> list:
+        out = []
+        for part in model["parts"]:
+            outers, holes = [], []
+            for contour in part["contours"]:
+                ring = _contour_to_ring(contour)
+                if not ring:
+                    continue
+                poly = Polygon(ring).buffer(0)
+                if poly.is_empty:
+                    continue
+                (outers if contour["type"] == "outer" else holes).append(poly)
+            if not outers:
+                continue
+            outer_union = unary_union(outers).buffer(0)
+            hole_union = unary_union([hole for hole in holes if hole.within(outer_union)]).buffer(0) if holes else None
+            part_poly = outer_union.difference(hole_union).buffer(0) if hole_union else outer_union
+            if not part_poly.is_empty:
+                out.append(part_poly)
+        return out
+
+    width = model["sheet"]["width"]
+    height = model["sheet"]["height"]
+    sheet_poly = Polygon([(0, 0), (width, 0), (width, height), (0, height)]).buffer(0)
+    part_polys = parts_to_polygons()
+    parts_union = unary_union(part_polys).buffer(0) if part_polys else Polygon()
+    skeleton = sheet_poly.difference(parts_union).buffer(0)
+
+    candidates = [
+        LineString([(0, y), (width, y)]) for y in (height * 0.25, height * 0.5, height * 0.75)
+    ] + [
+        LineString([(x, 0), (x, height)]) for x in (width / 3.0, width * 2.0 / 3.0)
+    ]
+    cut_lines = []
+    for line in candidates:
+        clipped = line.intersection(skeleton)
+        if clipped.is_empty:
+            continue
+        clipped = clipped.difference(parts_union).buffer(0)
+        if clipped.is_empty:
+            continue
+        if clipped.geom_type == "LineString":
+            cut_lines.append(clipped)
+        elif clipped.geom_type == "MultiLineString":
+            cut_lines.extend([geom for geom in clipped.geoms if geom.length > 1e-4])
+
+    model2 = dict(model)
+    skeleton_cuts = []
+    for idx, line in enumerate(cut_lines, start=1):
+        coords = list(line.coords)
+        skeleton_cuts.append({"id": idx, "a": [coords[0][0], coords[0][1]], "b": [coords[-1][0], coords[-1][1]]})
+    model2["skeletonCuts"] = skeleton_cuts
+    return model2
+
+
+def export_reordered_mpf(original_text: str, order: list[int]) -> str:
+    lines = original_text.splitlines()
+    blocks, preamble, postamble = [], [], []
+    in_block = False
+    current = []
+    seen_any = False
+    for line in lines:
+        u = line.strip().upper()
+        if "HKSTR(" in u:
+            in_block = True
+            seen_any = True
+            current = [line]
+            continue
+        if in_block:
+            current.append(line)
+            if "HKSTO" in u:
+                blocks.append(current)
+                in_block = False
+                current = []
+            continue
+        if not seen_any:
+            preamble.append(line)
+        else:
+            postamble.append(line)
+    if len(order) != len(blocks):
+        raise HTTPException(status_code=400, detail=f"order length {len(order)} != blocks {len(blocks)}")
+    reordered = preamble
+    for contour_id in order:
+        reordered.extend(blocks[contour_id - 1])
+    reordered.extend(postamble)
+    return "\n".join(reordered)
+
+
+def generate_skeleton_mpf(original_text: str, model_with_skeleton: dict) -> str:
+    lines = original_text.splitlines()
+    insert_at = len(lines)
+    for i, line in enumerate(lines):
+        if "HKEND" in line.upper() or line.strip().upper().startswith("M30"):
+            insert_at = i
+            break
+    out = lines[:insert_at]
+    out.append("N900000 HKOST(0.0,0.0,0.0,990001,99,0,0,0)")
+    seq = 900010
+    for cut in model_with_skeleton.get("skeletonCuts", []):
+        ax, ay = cut["a"]
+        bx, by = cut["b"]
+        out.append(f"N{seq} HKSTR(0,1,{ax:.4f},{ay:.4f},0,0,0,0)")
+        seq += 10
+        out.extend(["HKPIE(0,0,0)", "HKLEA(0,0,0)", "HKCUT(0,0,0)", f"G1 X{ax:.4f} Y{ay:.4f}", f"G1 X{bx:.4f} Y{by:.4f}", "HKSTO(0,0,0)"])
+    out.append(f"N{seq} HKPED(0,0,0)")
+    out.extend(lines[insert_at:])
+    return "\n".join(out)
+
+
+def _render_cutplan_index(request: Request, db: Session, user):
+    jobs = db.query(models.CutJob).order_by(models.CutJob.created_at.desc()).limit(50).all()
+    mpf_rows = db.query(models.MpfMaster).order_by(models.MpfMaster.created_at.desc()).limit(200).all()
+    return templates.TemplateResponse(
+        "cutplan/index.html",
+        {"request": request, "user": user, "jobs": jobs, "mpf_rows": mpf_rows, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, **engineering_nav_context()},
+    )
+
+
+def _render_cutplan_view(job_id: int, request: Request, db: Session, user):
+    job = db.query(models.CutJob).filter(models.CutJob.id == job_id).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return templates.TemplateResponse(
+        "cutplan/view.html",
+        {"request": request, "user": user, "job": job, "top_nav": TOP_NAV, "entity_groups": ENTITY_GROUPS, **engineering_nav_context()},
+    )
+
+
+@app.get("/cutplan", response_class=HTMLResponse)
+def cutplan_index(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return _render_cutplan_index(request, db, user)
+
+
+@app.get("/engineering/hk-mpf/cutplanner", response_class=HTMLResponse)
+def engineering_cutplan_index(request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return _render_cutplan_index(request, db, user)
+
+
+@app.post("/cutplan/upload")
+async def cutplan_upload(request: Request, file: UploadFile = File(...), name: str = Form("MPF Job"), engineering_job_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
+    _require_cutplan_write(user)
+    root = cutplan_storage_root()
+    mpf_path = root / "mpf" / f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{Path(file.filename or 'upload.mpf').name}"
+    content = await file.read()
+    mpf_path.write_bytes(content)
+    parsed = parse_hk_mpf(content.decode("utf-8", errors="ignore"))
+    job = models.CutJob(name=name, mpf_path=str(mpf_path), engineering_job_id=engineering_job_id)
+    db.add(job)
+    db.flush()
+    db.add(models.CutArtifact(job_id=job.id, kind="parsed", json_text=json.dumps(parsed)))
+    db.commit()
+    return RedirectResponse(url=f"/engineering/hk-mpf/cutplanner/{job.id}", status_code=303)
+
+
+@app.post("/engineering/hk-mpf/cutplanner/upload")
+async def engineering_cutplan_upload(request: Request, file: UploadFile = File(...), name: str = Form("MPF Job"), engineering_job_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
+    return await cutplan_upload(request=request, file=file, name=name, engineering_job_id=engineering_job_id, db=db, user=user)
+
+
+@app.get("/cutplan/{job_id}", response_class=HTMLResponse)
+def cutplan_view(job_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return _render_cutplan_view(job_id, request, db, user)
+
+
+@app.get("/engineering/hk-mpf/cutplanner/{job_id}", response_class=HTMLResponse)
+def engineering_cutplan_view(job_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return _render_cutplan_view(job_id, request, db, user)
+
+
+@app.get("/api/cutplan/{job_id}/model")
+def api_cutplan_model(job_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    art = db.query(models.CutArtifact).filter(models.CutArtifact.job_id == job_id, models.CutArtifact.kind == "parsed").order_by(models.CutArtifact.created_at.desc()).first()
+    if not art:
+        raise HTTPException(404, "Parsed model not found")
+    return JSONResponse(json.loads(art.json_text))
+
+
+@app.post("/api/cutplan/{job_id}/reorder")
+async def api_cutplan_reorder(job_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    _require_cutplan_write(user)
+    payload = await request.json()
+    order = payload.get("order")
+    if not isinstance(order, list) or not all(isinstance(v, int) for v in order):
+        raise HTTPException(400, "order must be list[int]")
+    job = db.query(models.CutJob).filter(models.CutJob.id == job_id).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    original = Path(job.mpf_path).read_text(encoding="utf-8", errors="ignore")
+    out_path = cutplan_storage_root() / "gen" / f"job_{job.id}_reordered.mpf"
+    out_path.write_text(export_reordered_mpf(original, order), encoding="utf-8")
+    db.add(models.CutArtifact(job_id=job.id, kind="reordered", file_path=str(out_path), json_text=json.dumps({"order": order})))
+    db.commit()
+    return JSONResponse({"ok": True, "download": f"/cutplan/{job_id}/download/reordered"})
+
+
+@app.post("/api/cutplan/{job_id}/compute_skeleton")
+def api_compute_skeleton(job_id: int, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    _require_cutplan_write(user)
+    job = db.query(models.CutJob).filter(models.CutJob.id == job_id).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    parsed_art = db.query(models.CutArtifact).filter(models.CutArtifact.job_id == job_id, models.CutArtifact.kind == "parsed").order_by(models.CutArtifact.created_at.desc()).first()
+    if not parsed_art:
+        raise HTTPException(404, "Parsed model not found")
+    model2 = compute_skeleton(json.loads(parsed_art.json_text))
+    original = Path(job.mpf_path).read_text(encoding="utf-8", errors="ignore")
+    out_path = cutplan_storage_root() / "gen" / f"job_{job.id}_skeleton.mpf"
+    out_path.write_text(generate_skeleton_mpf(original, model2), encoding="utf-8")
+    db.add(models.CutArtifact(job_id=job.id, kind="skeleton", json_text=json.dumps(model2), file_path=str(out_path)))
+    db.commit()
+    return JSONResponse({"ok": True, "download": f"/cutplan/{job_id}/download/skeleton"})
+
+
+@app.get("/cutplan/{job_id}/download/{kind}")
+def cutplan_download(job_id: int, kind: str, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    if kind not in ("reordered", "skeleton"):
+        raise HTTPException(400, "Invalid kind")
+    art = db.query(models.CutArtifact).filter(models.CutArtifact.job_id == job_id, models.CutArtifact.kind == kind).order_by(models.CutArtifact.created_at.desc()).first()
+    if not art or not art.file_path:
+        raise HTTPException(404, "File not found")
+    return FileResponse(art.file_path, filename=os.path.basename(art.file_path))
+
+
+@app.get("/engineering/hk-mpf/cutplanner/{job_id}/download/{kind}")
+def engineering_cutplan_download(job_id: int, kind: str, request: Request, db: Session = Depends(get_db), user=Depends(require_login)):
+    return cutplan_download(job_id=job_id, kind=kind, request=request, db=db, user=user)
