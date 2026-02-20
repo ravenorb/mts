@@ -3746,10 +3746,12 @@ def parse_hk_mpf(text: str) -> dict:
         if "HKOST(" in u:
             vals = _extract_call_floats(u, "HKOST")
             start_line = int(vals[3]) if len(vals) >= 4 else None
+            contour_count = int(vals[4]) if len(vals) >= 5 else None
             current_part = {
                 "program_id": start_line,
-                "tech": int(vals[4]) if len(vals) >= 5 else None,
+                "contour_count": contour_count,
                 "offset": [vals[0] if len(vals) >= 1 else 0.0, vals[1] if len(vals) >= 2 else 0.0],
+                "frames": [],
                 "contours": [],
             }
             parts.append(current_part)
@@ -3770,17 +3772,23 @@ def parse_hk_mpf(text: str) -> dict:
                 placements = active_parts
             else:
                 if current_part is None:
-                    current_part = {"program_id": None, "tech": None, "offset": [0.0, 0.0], "contours": []}
+                    current_part = {"program_id": None, "contour_count": None, "offset": [0.0, 0.0], "frames": [], "contours": []}
                     parts.append(current_part)
                 placements = [current_part]
                 active_parts = placements
 
             current_contours = []
             ctype = "outer" if (int(vals[0]) if vals else 0) == 0 else "hole"
+            frame = {
+                "origin": [0.0, 0.0],
+                "dims": [vals[3] if len(vals) >= 4 else 0.0, vals[4] if len(vals) >= 5 else 0.0, vals[5] if len(vals) >= 6 else 0.0],
+                "hkstr": vals,
+            }
             for placed_part in placements:
                 contour = {"type": ctype, "hkstr": vals, "segments": []}
                 placed_part["contours"].append(contour)
                 ox, oy = placed_part.get("offset", [0.0, 0.0])
+                placed_part.setdefault("frames", []).append({**frame, "origin": [ox, oy]})
                 current_contours.append({"contour": contour, "offset": [ox, oy]})
             continue
         if "HKCUT" in u:
@@ -3825,9 +3833,11 @@ def parse_hk_mpf(text: str) -> dict:
     for part in parts:
         part.pop("offset", None)
     contour_id = 1
-    for part in parts:
-        for contour in part["contours"]:
+    for part_idx, part in enumerate(parts, start=1):
+        part["index"] = part_idx
+        for contour_idx, contour in enumerate(part["contours"], start=1):
             contour["id"] = contour_id
+            contour["index"] = contour_idx
             contour_id += 1
     return {"sheet": sheet, "parts": parts}
 
