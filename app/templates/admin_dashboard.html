@@ -69,9 +69,8 @@
     <button type="submit" name="action" value="reset_inventory">Reset Inventory</button>
 
     <h4>Storage Layout Rebuild</h4>
-    <label for="storage_layout_file">Storage layout CSV</label>
-    <input id="storage_layout_file" type="file" name="storage_layout_file" accept=".csv,text/csv" />
-    <small>Expected headers: <code>location name,location_id,shelfs,bins,pallets</code></small>
+    <p>Rebuilds storage locations and bins using the default MTS layout.</p>
+    <small>Schema: <code>location name,location_id,shelfs,bins,pallets</code></small>
     <button type="submit" name="action" value="rebuild_storage_locations">Rebuild Storage Locations</button>
   </form>
 {% endif %}

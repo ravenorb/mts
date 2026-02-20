@@ -3222,6 +3222,37 @@ def parse_storage_layout_csv(file_text: str) -> list[dict]:
     return rows
 
 
+DEFAULT_STORAGE_LAYOUT_CSV = """location name,location_id,shelfs,bins,pallets
+STAGING,STAGE,1,100,T
+STATION   QUEUE,ST__Q,1,15,T
+STATION  ,ST_,1,2,T
+STATION   POST,ST__P,1,3,T
+STATION   QUEUE,ST__Q,1,15,T
+STATION  ,ST_,1,2,T
+STATION   POST,ST__P,1,3,T
+STATION   QUEUE,ST__Q,1,15,T
+STATION  ,ST_,1,2,T
+STATION   POST,ST__P,1,3,T
+STATION   QUEUE,ST__Q,1,15,T
+STATION  ,ST_,1,2,T
+STATION   POST,ST__P,1,3,T
+STATION   QUEUE,ST__Q,1,15,T
+STATION  ,ST_,1,2,T
+STATION   POST,ST__P,1,3,T
+STATION   QUEUE,ST__Q,1,15,T
+STATION  ,ST_,1,2,T
+STATION   POST,ST__P,1,3,T
+COMPLETE,COMPLETE,1,100,T
+STORAGE RACK WEST,SRW_,8,2,T
+STORAGE RACK EAST,SRE_,4,2,T
+STORAGE FLOOR WEST,SFW,1,15,T
+STORAGE FLOOR EAST,SFE_,1,10,T
+LASER PARTS RACK,LPR_,3,3,T
+WATER JET PART CABINET,WJC_,5,5,T
+WELDING PARTS RACK,WPR_,3,3,T
+"""
+
+
 def reset_inventory_state(db: Session):
     db.query(models.PartInventory).update(
         {
@@ -3741,7 +3772,7 @@ def admin_entity_view(entity: str, item_id: int, request: Request, db: Session =
 async def server_maintenance(request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
     global DRAWING_DIR, PDF_DIR, PART_FILE_DIR, RUNTIME_SETTINGS
     form = await request.form()
-    action = form.get("action", "")
+    action = str(form.get("action") or "").strip()
     chosen_branch = (form.get("branch") or "").replace("remotes/origin/", "", 1).strip()
     message = "No action taken"
 
@@ -3803,24 +3834,16 @@ async def server_maintenance(request: Request, db: Session = Depends(get_db), us
         reset_inventory_state(db)
         message = "Inventory quantities reset and storage bins cleared."
     elif action == "rebuild_storage_locations":
-        layout_file = form.get("storage_layout_file")
-        if not isinstance(layout_file, UploadFile) or not layout_file.filename:
-            message = "Please upload a CSV file to rebuild storage locations."
-        else:
-            try:
-                layout_text = (await layout_file.read()).decode("utf-8")
-                layout_rows = parse_storage_layout_csv(layout_text)
-                if not layout_rows:
-                    message = "No valid layout rows found in uploaded file."
-                else:
-                    rebuild_storage_locations(db, layout_rows)
-                    message = f"Rebuilt {len(layout_rows)} storage locations from uploaded file."
-            except (UnicodeDecodeError, ValueError) as exc:
-                db.rollback()
-                message = f"Invalid storage layout file: {exc}"
-            except SQLAlchemyError as exc:
-                db.rollback()
-                message = f"Storage rebuild failed: {exc}"
+        try:
+            layout_rows = parse_storage_layout_csv(DEFAULT_STORAGE_LAYOUT_CSV)
+            rebuild_storage_locations(db, layout_rows)
+            message = f"Rebuilt {len(layout_rows)} storage locations from default layout."
+        except (UnicodeDecodeError, ValueError) as exc:
+            db.rollback()
+            message = f"Invalid default storage layout: {exc}"
+        except SQLAlchemyError as exc:
+            db.rollback()
+            message = f"Storage rebuild failed: {exc}"
 
     return RedirectResponse(f"/admin?tab=server-maintenance&message={message}", status_code=302)
 
