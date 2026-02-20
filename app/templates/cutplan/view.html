@@ -19,6 +19,7 @@
 
     <div style="display:flex; gap:8px; flex-wrap:wrap">
       <button onclick="showAll()">Show All</button>
+      <button id="panToggleBtn" onclick="togglePanMode()">Pan: Off</button>
       <button onclick="exportReorder()">Export Reordered</button>
       <button onclick="computeSkeleton()">Compute Skeleton Cuts</button>
     </div>
@@ -52,6 +53,9 @@ let baseScale = 1;
 let zoom = 1;
 let panX = 0;
 let panY = 0;
+let panMode = false;
+let draggingPan = false;
+let dragStart = null;
 function fitView(){
   if(!model) return;
   const sheet = model.sheet; const pad = 60;
@@ -75,6 +79,11 @@ function renderList(){
 function moveUp(i){ [order[i-1], order[i]] = [order[i], order[i-1]]; renderList(); draw(); }
 function moveDown(i){ [order[i], order[i+1]] = [order[i+1], order[i]]; renderList(); draw(); }
 function showAll(){ currentPart = null; draw(); }
+function togglePanMode(){
+  panMode = !panMode;
+  document.getElementById("panToggleBtn").textContent = panMode ? "Pan: On" : "Pan: Off";
+  cv.style.cursor = panMode ? "grab" : "default";
+}
 async function exportReorder(){
   const r = await fetch(`/api/cutplan/${jobId}/reorder`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({order})});
   const j = await r.json(); if(j.download){ const a = document.getElementById("dlRe"); a.href = j.download; a.textContent = "Download reordered MPF"; a.style.display = "inline"; }
@@ -122,7 +131,30 @@ cv.addEventListener("wheel", (e) => {
   panY = (cv.height - cy) - wy * scale;
   draw();
 }, { passive: false });
-cv.addEventListener("click", () => { if(!model) return; if(currentPart === null) currentPart = 0; else currentPart = (currentPart + 1) % model.parts.length; draw(); });
+cv.addEventListener("mousedown", (e) => {
+  if(!panMode || !model) return;
+  draggingPan = true;
+  dragStart = {x: e.clientX, y: e.clientY, panX, panY};
+  cv.style.cursor = "grabbing";
+});
+window.addEventListener("mousemove", (e) => {
+  if(!draggingPan || !dragStart) return;
+  panX = dragStart.panX + (e.clientX - dragStart.x);
+  panY = dragStart.panY - (e.clientY - dragStart.y);
+  draw();
+});
+window.addEventListener("mouseup", () => {
+  if(!draggingPan) return;
+  draggingPan = false;
+  dragStart = null;
+  cv.style.cursor = panMode ? "grab" : "default";
+});
+cv.addEventListener("click", () => {
+  if(!model || panMode) return;
+  if(currentPart === null) currentPart = 0;
+  else currentPart = (currentPart + 1) % model.parts.length;
+  draw();
+});
 (async function(){ model = await (await fetch(`/api/cutplan/${jobId}/model`)).json(); initOrder(); renderList(); resize(); fitView(); draw(); })();
 </script>
 {% endblock %}
