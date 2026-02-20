@@ -2,39 +2,35 @@
 {% block content %}
 <h2>Complete Pallet {{pallet.pallet_code}} @ {{station.station_name}}</h2>
 
+{% if open_exceptions %}
+<div class="form-error-banner">Open exceptions exist for this pallet/station. Station remains blocked until they are resolved.</div>
+{% endif %}
+
 <form method="post" action="/stations/{{station.id}}/complete" class="panel-form">
   <table>
     <tr>
       <th>Component ID</th>
-      <th>Qty Expected</th>
-      <th>Qty Completed</th>
+      <th>Expected Qty</th>
+      <th>Qty {{qty_column.replace('qty_', '').upper()}}</th>
       <th>Qty Scrap</th>
     </tr>
     {% for row in part_rows %}
     <tr>
-      <td>
-        {{row.component_id}}
-        <input type="hidden" name="component_id" value="{{row.component_id}}" />
-      </td>
-      <td>
-        {{row.expected_qty or 0}}
-        <input type="hidden" name="qty_expected" value="{{row.expected_qty or 0}}" />
-      </td>
+      <td>{{row.component_id}}<input type="hidden" name="component_id" value="{{row.component_id}}" /></td>
+      <td>{{row.expected_qty or 0}}<input type="hidden" name="qty_expected" value="{{row.expected_qty or 0}}" /></td>
       <td><input type="number" step="0.01" name="qty_completed" value="{{row.expected_qty or 0}}" required /></td>
       <td><input type="number" step="0.01" name="qty_scrap" value="0" required /></td>
     </tr>
     {% endfor %}
   </table>
 
-  <label>If completed less than expected, spawn leftover pallet?</label>
-  <select name="spawn_leftover">
-    <option value="no">No</option>
-    <option value="yes">Yes</option>
-  </select>
+  <label>Allow incomplete completion (station blocked until exception resolved)</label>
+  <select name="allow_incomplete"><option value="no">No</option><option value="yes">Yes - acknowledge warning</option></select>
 
   <label>After completion</label>
   <select name="route_choice" id="route-choice">
     <option value="queue_next">Queue to next station</option>
+    <option value="current_station">Keep at current station post</option>
     <option value="store">Store pallet</option>
   </select>
 

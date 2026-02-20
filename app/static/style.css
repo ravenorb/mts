@@ -108,3 +108,5 @@ button,input[type="submit"],input[type="button"]{background:#eef2ff}
 .station-queue-card{background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:10px}
 .queue-chip-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;min-height:38px;padding:6px;border:1px dashed #cbd5e1;border-radius:6px;background:#f8fafc}
 .queue-chip{padding:6px 10px;border-radius:999px;background:#dbeafe;border:1px solid #93c5fd;cursor:grab;font-size:12px}
+.station-dashboard-actions{align-items:stretch}
+.dashboard-big-btn{padding:16px 20px!important;font-size:20px!important;font-weight:700;min-width:220px;text-align:center}
