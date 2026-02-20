@@ -2,6 +2,8 @@
 {% block content %}
 <h2>Edit Storage Location #{{location.id}}</h2>
 <form method="post" action="/inventory/locations/{{location.id}}/edit" class="panel-form">
+  <label for="location_code">Location Code (optional)</label>
+  <input id="location_code" name="location_code" value="{{location.location_code}}" />
   <label for="location_description">Location Description</label>
   <input id="location_description" name="location_description" value="{{location.location_description}}" required />
   <label><input type="checkbox" name="pallet_storage" {% if location.pallet_storage %}checked{% endif %}/> Pallet storage</label>

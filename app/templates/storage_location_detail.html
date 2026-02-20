@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Storage Location {{location.id}}</h2>
-<p><strong>Description:</strong> {{location.location_description}} | <strong>Pallet storage:</strong> {{'Y' if location.pallet_storage else 'N'}}</p>
+<p><strong>Code:</strong> {{location.location_code}} | <strong>Description:</strong> {{location.location_description}} | <strong>Pallet storage:</strong> {{'Y' if location.pallet_storage else 'N'}}</p>
 {% for shelf_id, bins in shelves.items() %}
 <h3>Shelf {{shelf_id}}</h3>
 <table>
