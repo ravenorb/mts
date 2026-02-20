@@ -3696,6 +3696,13 @@ RE_I = re.compile(r"\bI(" + NUM + r")\b", re.I)
 RE_J = re.compile(r"\bJ(" + NUM + r")\b", re.I)
 
 
+def _extract_call_floats(line: str, keyword: str) -> list[float]:
+    m = re.search(rf"{keyword}\(([^)]*)\)", line, re.I)
+    if not m:
+        return []
+    return [float(v) for v in RE_FLOATS.findall(m.group(1))]
+
+
 def _arc_points(start, end, i, j, cw: bool, step_deg: float = 6.0):
     sx, sy = start
     ex, ey = end
@@ -3727,18 +3734,23 @@ def parse_hk_mpf(text: str) -> dict:
             continue
         u = line.upper()
         if u.startswith("HKINI"):
-            vals = [float(v) for v in RE_FLOATS.findall(u)]
+            vals = _extract_call_floats(u, "HKINI")
             if len(vals) >= 3:
                 sheet["width"] = vals[1]
                 sheet["height"] = vals[2]
             continue
         if "HKOST(" in u:
-            vals = [float(v) for v in RE_FLOATS.findall(u)]
+            vals = _extract_call_floats(u, "HKOST")
             current_part = {"program_id": int(vals[3]) if len(vals) >= 4 else None, "tech": int(vals[4]) if len(vals) >= 5 else None, "contours": []}
             parts.append(current_part)
             continue
         if "HKSTR(" in u:
-            vals = [float(v) for v in RE_FLOATS.findall(u)]
+            vals = _extract_call_floats(u, "HKSTR")
+            # HKSTR args 3/4/5 are contour start offsets on the sheet (X/Y/Z).
+            # Use X/Y as the active tool position so subsequent moves render
+            # relative to the contour's actual sheet start.
+            x = vals[2] if len(vals) >= 3 else x
+            y = vals[3] if len(vals) >= 4 else y
             current_contour = {"type": "outer" if (int(vals[0]) if vals else 0) == 0 else "hole", "hkstr": vals, "segments": []}
             if current_part is None:
                 current_part = {"program_id": None, "tech": None, "contours": []}
