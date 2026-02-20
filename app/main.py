@@ -3730,6 +3730,7 @@ def parse_hk_mpf(text: str) -> dict:
     active_parts = []
     current_contours = []
     part_starts: dict[int, list[dict]] = {}
+    hkstr_block_id = 0
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -3761,6 +3762,7 @@ def parse_hk_mpf(text: str) -> dict:
             continue
         if "HKSTR(" in u:
             vals = _extract_call_floats(u, "HKSTR")
+            hkstr_block_id += 1
             # HKSTR args 3/4/5 are contour-local start coordinates (X/Y/Z).
             # HKOST provides sheet-level placement offsets keyed by HKSTR line.
             x = vals[2] if len(vals) >= 3 else x
@@ -3781,14 +3783,15 @@ def parse_hk_mpf(text: str) -> dict:
             ctype = "outer" if (int(vals[0]) if vals else 0) == 0 else "hole"
             frame = {
                 "origin": [0.0, 0.0],
-                "dims": [vals[3] if len(vals) >= 4 else 0.0, vals[4] if len(vals) >= 5 else 0.0, vals[5] if len(vals) >= 6 else 0.0],
+                "dims": [vals[5] if len(vals) >= 6 else 0.0, vals[6] if len(vals) >= 7 else 0.0, vals[7] if len(vals) >= 8 else 0.0],
                 "hkstr": vals,
             }
             for placed_part in placements:
-                contour = {"type": ctype, "hkstr": vals, "segments": []}
+                contour = {"type": ctype, "hkstr": vals, "segments": [], "block_id": hkstr_block_id}
                 placed_part["contours"].append(contour)
                 ox, oy = placed_part.get("offset", [0.0, 0.0])
-                placed_part.setdefault("frames", []).append({**frame, "origin": [ox, oy]})
+                if not placed_part.get("frames"):
+                    placed_part.setdefault("frames", []).append({**frame, "origin": [ox, oy]})
                 current_contours.append({"contour": contour, "offset": [ox, oy]})
             continue
         if "HKCUT" in u:
