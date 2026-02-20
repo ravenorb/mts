@@ -262,8 +262,9 @@ function draw(){
   });
 
   if(model.skeletonDebugLines){
-    ctx.strokeStyle = "rgba(255,0,0,0.45)";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,0,0,0.9)";
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
     model.skeletonDebugLines.forEach((line) => {
       const a = worldToCanvas(line.a);
       const b = worldToCanvas(line.b);
@@ -272,6 +273,7 @@ function draw(){
       ctx.lineTo(b[0], b[1]);
       ctx.stroke();
     });
+    ctx.lineCap = "butt";
   }
 
   if(model.skeletonCuts){
