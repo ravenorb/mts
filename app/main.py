@@ -3961,14 +3961,61 @@ def engineering_cutplan_index(request: Request, db: Session = Depends(get_db), u
 
 
 @app.post("/cutplan/upload")
-async def cutplan_upload(request: Request, file: UploadFile = File(...), name: str = Form("MPF Job"), engineering_job_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
+async def cutplan_upload(
+    request: Request,
+    file: UploadFile | None = File(None),
+    name: str = Form(""),
+    engineering_job_id: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
     _require_cutplan_write(user)
+    source_job_id: int | None = None
+    if engineering_job_id not in (None, ""):
+        try:
+            source_job_id = int(engineering_job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Source HK MPF must be a valid integer.") from exc
+
+    source_job = None
+    source_file_path: Path | None = None
+    if source_job_id is not None:
+        source_job = db.query(models.MpfMaster).filter_by(id=source_job_id).first()
+        if not source_job:
+            raise HTTPException(status_code=404, detail="Selected Source HK MPF was not found.")
+        source_candidates = sorted(
+            PART_FILE_DIR.glob(f"*_{source_job.mpf_filename}"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if source_candidates:
+            source_file_path = source_candidates[0]
+        else:
+            direct_path = PART_FILE_DIR / source_job.mpf_filename
+            if direct_path.exists():
+                source_file_path = direct_path
+
+    if (not file or not file.filename) and source_file_path is None:
+        raise HTTPException(status_code=400, detail="Upload an MPF file or choose Source HK MPF.")
+
     root = cutplan_storage_root()
-    mpf_path = root / "mpf" / f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{Path(file.filename or 'upload.mpf').name}"
-    content = await file.read()
+    source_name = file.filename if file and file.filename else (source_job.mpf_filename if source_job else "upload.mpf")
+    mpf_path = root / "mpf" / f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{Path(source_name).name}"
+    if file and file.filename:
+        content = await file.read()
+    else:
+        content = source_file_path.read_bytes() if source_file_path else b""
     mpf_path.write_bytes(content)
     parsed = parse_hk_mpf(content.decode("utf-8", errors="ignore"))
-    job = models.CutJob(name=name, mpf_path=str(mpf_path), engineering_job_id=engineering_job_id)
+    clean_name = (name or "").strip()
+    if not clean_name:
+        if source_job:
+            clean_name = f"CutPlan - {source_job.mpf_filename}"
+        elif source_name:
+            clean_name = f"CutPlan - {Path(source_name).name}"
+        else:
+            clean_name = "CutPlan Job"
+    job = models.CutJob(name=clean_name, mpf_path=str(mpf_path), engineering_job_id=source_job_id)
     db.add(job)
     db.flush()
     db.add(models.CutArtifact(job_id=job.id, kind="parsed", json_text=json.dumps(parsed)))
@@ -3977,7 +4024,14 @@ async def cutplan_upload(request: Request, file: UploadFile = File(...), name: s
 
 
 @app.post("/engineering/hk-mpf/cutplanner/upload")
-async def engineering_cutplan_upload(request: Request, file: UploadFile = File(...), name: str = Form("MPF Job"), engineering_job_id: int | None = Form(None), db: Session = Depends(get_db), user=Depends(require_login)):
+async def engineering_cutplan_upload(
+    request: Request,
+    file: UploadFile | None = File(None),
+    name: str = Form(""),
+    engineering_job_id: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user=Depends(require_login),
+):
     return await cutplan_upload(request=request, file=file, name=name, engineering_job_id=engineering_job_id, db=db, user=user)
 
 

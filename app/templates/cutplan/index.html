@@ -3,7 +3,7 @@
 <h2>HK Cut Planner</h2>
 
 <form class="panel-form" action="/cutplan/upload" method="post" enctype="multipart/form-data">
-  <label>Job Name <input type="text" name="name" value="MPF Job" /></label>
+  <label>Job Name (optional) <input type="text" name="name" placeholder="Auto-generated if blank" /></label>
   <label>Source HK MPF (optional)
     <select name="engineering_job_id">
       <option value="">-- none --</option>
@@ -12,7 +12,7 @@
       {% endfor %}
     </select>
   </label>
-  <label>File <input type="file" name="file" accept=".mpf,.nc,.txt" required /></label>
+  <label>File (optional if Source HK MPF is selected) <input type="file" name="file" accept=".mpf,.nc,.txt" /></label>
   <button type="submit">Upload</button>
 </form>
 
