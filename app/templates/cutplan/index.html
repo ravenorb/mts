@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>HK Cut Planner</h2>
+
+<form class="panel-form" action="/cutplan/upload" method="post" enctype="multipart/form-data">
+  <label>Job Name <input type="text" name="name" value="MPF Job" /></label>
+  <label>Source HK MPF (optional)
+    <select name="engineering_job_id">
+      <option value="">-- none --</option>
+      {% for row in mpf_rows or [] %}
+      <option value="{{row.id}}">{{row.mpf_filename}}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>File <input type="file" name="file" accept=".mpf,.nc,.txt" required /></label>
+  <button type="submit">Upload</button>
+</form>
+
+<h3>Recent Jobs</h3>
+<table>
+  <tr><th>ID</th><th>Name</th><th>Created</th><th>Link</th></tr>
+  {% for j in jobs %}
+  <tr>
+    <td>{{j.id}}</td><td>{{j.name}}</td><td>{{j.created_at}}</td>
+    <td><a href="/engineering/hk-mpf/cutplanner/{{j.id}}">open</a></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4">No cut planner jobs yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

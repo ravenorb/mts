@@ -7,3 +7,4 @@ itsdangerous==2.2.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 pypdf==5.1.0
+shapely==2.0.6

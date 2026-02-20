@@ -493,3 +493,24 @@ class DeliveredPartLot(Base):
     serial_begin: Mapped[str] = mapped_column(String(80), default="")
     completed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     recorded_by: Mapped[str] = mapped_column(String(80), default="system")
+
+
+class CutJob(Base):
+    __tablename__ = "cut_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), default="MPF Job")
+    mpf_path: Mapped[str] = mapped_column(Text)
+    engineering_job_id: Mapped[int | None] = mapped_column(ForeignKey("mpf_master.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CutArtifact(Base):
+    __tablename__ = "cut_artifacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("cut_jobs.id"))
+    kind: Mapped[str] = mapped_column(String(40))
+    json_text: Mapped[str] = mapped_column(Text, default="")
+    file_path: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
